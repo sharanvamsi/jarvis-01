@@ -1,0 +1,784 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ═══════════════════════════════════════════════
+// CORE / AUTH LAYER
+// ═══════════════════════════════════════════════
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  emailVerified   DateTime?
+  name            String?
+  image           String?
+  currentSemester String    @default("SP26") @map("current_semester")
+  onboardingDone  Boolean   @default(false) @map("onboarding_done")
+  gradescopeConnected Boolean   @default(false) @map("gradescope_connected")
+  lastSyncAt      DateTime? @map("last_sync_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  accounts                    Account[]
+  sessions                    Session[]
+  enrollments                 Enrollment[]
+  userAssignments             UserAssignment[]
+  calendarEvents              CalendarEvent[]
+  syncTokens                  SyncToken[]
+  syncLogs                    SyncLog[]
+  rawApiSnapshots             RawApiSnapshot[]
+  rawCanvasCourses            RawCanvasCourse[]
+  rawCanvasAssignments        RawCanvasAssignment[]
+  rawCanvasSubmissions        RawCanvasSubmission[]
+  rawCanvasAnnouncements      RawCanvasAnnouncement[]
+  rawGradescopeCourses        RawGradescopeCourse[]
+  rawGradescopeAssignments    RawGradescopeAssignment[]
+  rawEdThreads                RawEdThread[]
+  rawCalendarEvents           RawCalendarEvent[]
+  rawCourseWebsiteAssignments RawCourseWebsiteAssignment[]
+  rawCourseWebsitePageHashes  RawCourseWebsitePageHash[]
+  assignmentOverrides         AssignmentOverride[]
+
+  @@map("users")
+}
+
+model DeletedUser {
+  id                  String    @id @default(cuid())
+  originalUserId      String    @map("original_user_id")
+  email               String
+  emailVerified       DateTime? @map("email_verified")
+  name                String?
+  image               String?
+  currentSemester     String    @map("current_semester")
+  onboardingDone      Boolean   @map("onboarding_done")
+  gradescopeConnected Boolean   @map("gradescope_connected")
+  lastSyncAt          DateTime? @map("last_sync_at")
+  originalCreatedAt   DateTime  @map("original_created_at")
+  originalUpdatedAt   DateTime  @map("original_updated_at")
+  deletedAt           DateTime  @default(now()) @map("deleted_at")
+  deletionReason      String?   @map("deletion_reason")
+
+  @@map("deleted_users")
+}
+
+model SyncToken {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id")
+  service      String // canvas, google, ed, gradescope
+  accessToken  String    @map("access_token") // encrypted
+  refreshToken String?   @map("refresh_token") // encrypted
+  expiresAt    DateTime? @map("expires_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, service])
+  @@map("sync_tokens")
+}
+
+// ═══════════════════════════════════════════════
+// UNIFIED LAYER — dashboard reads these
+// ═══════════════════════════════════════════════
+
+model Course {
+  id                String    @id @default(cuid())
+  courseCode        String    @map("course_code")
+  courseName        String    @map("course_name")
+  term              String?
+  enrollmentState   String?   @map("enrollment_state")
+  canvasId          String?   @map("canvas_id")
+  gradescopeId      String?   @map("gradescope_id")
+  edCourseId        String?   @map("ed_course_id")
+  websiteUrl        String?   @map("website_url")
+  isCurrentSemester Boolean   @default(false) @map("is_current_semester")
+  lastUnifiedAt     DateTime? @map("last_unified_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  enrollments       Enrollment[]
+  assignments       Assignment[]
+  announcements     CanvasAnnouncement[]
+  edThreads         EdThread[]
+  officeHours       OfficeHour[]
+  exams             Exam[]
+  courseStaff        CourseStaff[]
+  syllabusWeeks     SyllabusWeek[]
+  syllabus          Syllabus?
+  @@unique([courseCode, term])
+  @@map("courses")
+}
+
+model Enrollment {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  courseId  String   @map("course_id")
+  role      String   @default("student")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@map("enrollments")
+}
+
+model Assignment {
+  id                 String    @id @default(cuid())
+  courseId           String    @map("course_id")
+  name               String
+  assignmentType     String?   @map("assignment_type")
+  dueDate            DateTime? @map("due_date")
+  releaseDate        DateTime? @map("release_date")
+  pointsPossible     Float?    @map("points_possible")
+  submissionTypes    String[]  @map("submission_types")
+  specUrl            String?   @map("spec_url")
+  htmlUrl            String?   @map("html_url")
+  canvasId           String?   @map("canvas_id")
+  gradescopeId       String?   @map("gradescope_id")
+  courseWebsiteId    String?   @map("course_website_id")
+  edThreadIds        String[]  @map("ed_thread_ids")
+  submissionPlatform String?   @map("submission_platform")
+  hardDueDate        DateTime? @map("hard_due_date")
+  source             String?   // canvas, gradescope, course_website
+  isCurrentSemester  Boolean   @default(false) @map("is_current_semester")
+  lastUnifiedAt      DateTime? @map("last_unified_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  course          Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userAssignments UserAssignment[]
+  groupMappings   AssignmentGroupMapping[]
+  examStats       ExamStat[]
+  overrides       AssignmentOverride[]
+
+  @@map("assignments")
+}
+
+model UserAssignment {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id")
+  assignmentId String    @map("assignment_id")
+  score        Float?
+  maxScore     Float?    @map("max_score")
+  grade        String?
+  status       String    @default("ungraded") // graded, submitted, missing, late, ungraded
+  submittedAt  DateTime? @map("submitted_at")
+  isLate       Boolean   @default(false) @map("is_late")
+  lateInfo     String?   @map("late_info")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, assignmentId])
+  @@map("user_assignments")
+}
+
+model CanvasAnnouncement {
+  id        String    @id @default(cuid())
+  courseId  String    @map("course_id")
+  canvasId  String    @map("canvas_id")
+  title     String
+  message   String?
+  postedAt  DateTime? @map("posted_at")
+  htmlUrl   String?   @map("html_url")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([canvasId])
+  @@map("canvas_announcements")
+}
+
+model EdThread {
+  id               String    @id @default(cuid())
+  courseId         String    @map("course_id")
+  edThreadId       String    @map("ed_thread_id")
+  title            String
+  category         String?
+  threadType       String    @map("thread_type") // announcement, question
+  isAnnouncement   Boolean   @default(false) @map("is_announcement")
+  isPinned         Boolean   @default(false) @map("is_pinned")
+  contentPreview   String?   @map("content_preview")
+  linkedAssignment String?   @map("linked_assignment")
+  answerCount      Int       @default(0) @map("answer_count")
+  voteCount        Int       @default(0) @map("vote_count")
+  isAnswered       Boolean   @default(false) @map("is_answered")
+  url              String?
+  postedAt         DateTime? @map("posted_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([edThreadId])
+  @@map("ed_threads")
+}
+
+model CalendarEvent {
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  googleEventId String?   @map("google_event_id")
+  title         String
+  startTime     DateTime  @map("start_time")
+  endTime       DateTime  @map("end_time")
+  location      String?
+  isAllDay      Boolean   @default(false) @map("is_all_day")
+  isClassEvent  Boolean   @default(false) @map("is_class_event")
+  courseCode    String?   @map("course_code")
+  berkeleyStart DateTime? @map("berkeley_start")
+  berkeleyEnd   DateTime? @map("berkeley_end")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, googleEventId])
+  @@map("calendar_events")
+}
+
+// ═══════════════════════════════════════════════
+// UNIFICATION METADATA
+// ═══════════════════════════════════════════════
+
+model UnifiedMismatch {
+  id            String    @id @default(cuid())
+  contentHash   String    @unique @map("content_hash")
+  unifiedId     String    @map("unified_id")
+  field         String
+  sourceA       String    @map("source_a")
+  valueA        String?   @map("value_a")
+  sourceB       String    @map("source_b")
+  valueB        String?   @map("value_b")
+  detectedAt    DateTime  @default(now()) @map("detected_at")
+  resolved      Boolean   @default(false)
+  resolvedValue String?   @map("resolved_value")
+  resolvedAt    DateTime? @map("resolved_at")
+
+  @@map("unified_mismatches")
+}
+
+model UserOverride {
+  id        String   @id @default(cuid())
+  unifiedId String   @map("unified_id")
+  field     String
+  value     String
+  setAt     DateTime @default(now()) @map("set_at")
+
+  @@unique([unifiedId, field])
+  @@map("user_overrides")
+}
+
+// ═══════════════════════════════════════════════
+// SYNC INFRASTRUCTURE
+// ═══════════════════════════════════════════════
+
+model SyncLog {
+  id                String    @id @default(cuid())
+  userId            String    @map("user_id")
+  service           String // canvas, gradescope, ed, calendar, course_website
+  status            String    @default("running") // running, success, partial, failed
+  isInitialBackfill Boolean   @default(false) @map("is_initial_backfill")
+  recordsFetched    Int       @default(0) @map("records_fetched")
+  recordsCreated    Int       @default(0) @map("records_created")
+  recordsUpdated    Int       @default(0) @map("records_updated")
+  errorMessage      String?   @map("error_message")
+  startedAt         DateTime  @default(now()) @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sync_logs")
+}
+
+model RawApiSnapshot {
+  id       String   @id @default(cuid())
+  userId   String   @map("user_id")
+  service  String
+  rawJson  Json     @map("raw_json")
+  syncedAt DateTime @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, service])
+  @@map("raw_api_snapshots")
+}
+
+// ═══════════════════════════════════════════════
+// RAW CANVAS TABLES
+// ═══════════════════════════════════════════════
+
+model RawCanvasCourse {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  canvasCourseId  String   @map("canvas_course_id")
+  name            String?
+  courseCode      String?  @map("course_code")
+  term            String?
+  enrollmentState String?  @map("enrollment_state")
+  canvasUrl       String?  @map("canvas_url")
+  isCurrent       Boolean  @default(false) @map("is_current")
+  rawJson         Json     @map("raw_json")
+  syncedAt        DateTime @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, canvasCourseId])
+  @@map("raw_canvas_courses")
+}
+
+model RawCanvasAssignment {
+  id                 String    @id @default(cuid())
+  userId             String    @map("user_id")
+  canvasAssignmentId String    @map("canvas_assignment_id")
+  canvasCourseId     String    @map("canvas_course_id")
+  name               String
+  dueDate            DateTime? @map("due_date")
+  pointsPossible     Float?    @map("points_possible")
+  submissionTypes    String[]  @map("submission_types")
+  htmlUrl            String?   @map("html_url")
+  rawJson            Json      @map("raw_json")
+  syncedAt           DateTime  @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, canvasAssignmentId])
+  @@map("raw_canvas_assignments")
+}
+
+model RawCanvasSubmission {
+  id                 String    @id @default(cuid())
+  userId             String    @map("user_id")
+  canvasAssignmentId String    @map("canvas_assignment_id")
+  workflowState      String?   @map("workflow_state")
+  score              Float?
+  grade              String?
+  submittedAt        DateTime? @map("submitted_at")
+  rawJson            Json      @map("raw_json")
+  syncedAt           DateTime  @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, canvasAssignmentId])
+  @@map("raw_canvas_submissions")
+}
+
+model RawCanvasAnnouncement {
+  id                   String    @id @default(cuid())
+  userId               String    @map("user_id")
+  canvasAnnouncementId String    @map("canvas_announcement_id")
+  canvasCourseId       String    @map("canvas_course_id")
+  title                String
+  message              String?
+  postedAt             DateTime? @map("posted_at")
+  htmlUrl              String?   @map("html_url")
+  rawJson              Json      @map("raw_json")
+  syncedAt             DateTime  @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, canvasAnnouncementId])
+  @@map("raw_canvas_announcements")
+}
+
+// ═══════════════════════════════════════════════
+// RAW GRADESCOPE TABLES
+// ═══════════════════════════════════════════════
+
+model RawGradescopeCourse {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  gradescopeId String   @map("gradescope_id")
+  shortName    String?  @map("short_name")
+  name         String?
+  term         String?
+  role         String?
+  rawJson      Json     @map("raw_json")
+  syncedAt     DateTime @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gradescopeId])
+  @@map("raw_gradescope_courses")
+}
+
+model RawGradescopeAssignment {
+  id                 String    @id @default(cuid())
+  userId             String    @map("user_id")
+  gradescopeId       String    @map("gradescope_id")
+  courseGradescopeId String    @map("course_gradescope_id")
+  name               String?
+  title              String?
+  url                String?
+  releaseDate        DateTime? @map("release_date")
+  dueDate            DateTime? @map("due_date")
+  hardDueDate        DateTime? @map("hard_due_date")
+  totalPoints        Float?    @map("total_points")
+  earnedPoints       Float?    @map("earned_points")
+  submitted          Boolean   @default(false)
+  submissionState    String?   @map("submission_state")
+  status             String?
+  lateInfo           String?   @map("late_info")
+  rawJson            Json      @map("raw_json")
+  syncedAt           DateTime  @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gradescopeId, courseGradescopeId])
+  @@map("raw_gradescope_assignments")
+}
+
+// ═══════════════════════════════════════════════
+// RAW ED TABLES
+// ═══════════════════════════════════════════════
+
+model RawEdThread {
+  id               String    @id @default(cuid())
+  userId           String    @map("user_id")
+  edThreadId       String    @map("ed_thread_id")
+  edCourseId       String    @map("ed_course_id")
+  courseName       String?   @map("course_name")
+  title            String
+  category         String?
+  isAnnouncement   Boolean   @default(false) @map("is_announcement")
+  isPinned         Boolean   @default(false) @map("is_pinned")
+  contentPreview   String?   @map("content_preview")
+  linkedAssignment String?   @map("linked_assignment")
+  answerCount      Int       @default(0) @map("answer_count")
+  voteCount        Int       @default(0) @map("vote_count")
+  isAnswered       Boolean   @default(false) @map("is_answered")
+  url              String?
+  threadCreatedAt  DateTime? @map("thread_created_at")
+  rawJson          Json      @map("raw_json")
+  syncedAt         DateTime  @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, edThreadId])
+  @@map("raw_ed_threads")
+}
+
+// ═══════════════════════════════════════════════
+// RAW CALENDAR TABLES
+// ═══════════════════════════════════════════════
+
+model RawCalendarEvent {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  googleEventId String   @map("google_event_id")
+  title         String
+  startTime     DateTime @map("start_time")
+  endTime       DateTime @map("end_time")
+  location      String?
+  isAllDay      Boolean  @default(false) @map("is_all_day")
+  rawJson       Json     @map("raw_json")
+  syncedAt      DateTime @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, googleEventId])
+  @@map("raw_calendar_events")
+}
+
+// ═══════════════════════════════════════════════
+// COURSE WEBSITE EXTRACTED DATA
+// ═══════════════════════════════════════════════
+
+model OfficeHour {
+  id          String  @id @default(cuid())
+  courseId    String  @map("course_id")
+  staffName   String  @map("staff_name")
+  staffRole   String  @default("ta") @map("staff_role") // professor, ta, tutor, other
+  dayOfWeek   Int     @map("day_of_week") // 0=Sun, 1=Mon...6=Sat
+  startTime   String  @map("start_time") // "2:00 PM"
+  endTime     String  @map("end_time")   // "4:00 PM"
+  location    String?
+  zoomLink    String? @map("zoom_link")
+  isRecurring Boolean @default(true) @map("is_recurring")
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@map("office_hours")
+}
+
+model Exam {
+  id          String    @id @default(cuid())
+  courseId    String    @map("course_id")
+  name        String    // "Midterm 1", "Final"
+  date        DateTime?
+  location    String?
+  durationMin Int?      @map("duration_min")
+  pastExamUrl String?   @map("past_exam_url")
+  solutionUrl String?   @map("solution_url")
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@map("exams")
+}
+
+model CourseStaff {
+  id       String  @id @default(cuid())
+  courseId String  @map("course_id")
+  name     String
+  role     String  @default("staff") // professor, ta, tutor, reader, staff
+  email    String?
+  photoUrl String? @map("photo_url")
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@map("course_staff")
+}
+
+model SyllabusWeek {
+  id        String    @id @default(cuid())
+  courseId  String    @map("course_id")
+  weekNum   Int       @map("week_num")
+  topic     String
+  startDate DateTime? @map("start_date")
+  readings  String?
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, weekNum])
+  @@map("syllabus_weeks")
+}
+
+// ═══════════════════════════════════════════════
+// RAW COURSE WEBSITE TABLES
+// ═══════════════════════════════════════════════
+
+model RawCourseWebsiteAssignment {
+  id             String    @id @default(cuid())
+  userId         String    @map("user_id")
+  courseId       String    @map("course_id")
+  courseName     String?   @map("course_name")
+  name           String
+  specUrl        String?   @map("spec_url")
+  dueDate        DateTime? @map("due_date")
+  releaseDate    DateTime? @map("release_date")
+  assignmentType String?   @map("assignment_type")
+  rawJson        Json      @map("raw_json")
+  syncedAt       DateTime  @default(now()) @map("synced_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("raw_course_website_assignments")
+}
+
+model RawCourseWebsitePageHash {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  courseId    String    @map("course_id")
+  contentHash String    @map("content_hash")
+  lastChecked DateTime  @map("last_checked")
+  lastChanged DateTime? @map("last_changed")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@map("raw_course_website_page_hashes")
+}
+
+// ═══════════════════════════════════════════════
+// SYNC METADATA
+// ═══════════════════════════════════════════════
+
+model SyncMetadata {
+  id                       String    @id @default(cuid())
+  userId                   String    @map("user_id")
+  source                   String // canvas, gradescope, ed, calendar, course_website
+  lastSynced               DateTime? @map("last_synced")
+  lastForced               DateTime? @map("last_forced")
+  needsUnification         Boolean   @default(true) @map("needs_unification")
+  initialBackfillCompleted Boolean   @default(false) @map("initial_backfill_completed")
+
+  @@unique([userId, source])
+  @@map("sync_metadata")
+}
+
+// ═══════════════════════════════════════════════
+// NEXTAUTH TABLES
+// ═══════════════════════════════════════════════
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ═══════════════════════════════════════════════
+// BERKELEYTIME GRADE DISTRIBUTIONS
+// ═══════════════════════════════════════════════
+
+// Shared across all users — keyed on course identity, not userId
+// One record per unique subject+courseNumber combination
+model BerkeleyTimeCourse {
+  id                     String                 @id @default(cuid())
+  subject                String
+  courseNumber            String
+  historicalBackfillDone Boolean                @default(false)
+  lastIncrementalSync    DateTime?
+  snapshots              BerkeleyTimeSnapshot[]
+
+  @@unique([subject, courseNumber])
+}
+
+// One row per semester (and optionally per instructor) for a course
+// distribution is BTDistributionItem[] stored as Json
+model BerkeleyTimeSnapshot {
+  id            String             @id @default(cuid())
+  btCourseId    String
+  year          Int
+  semester      String             // "Spring" | "Fall" | "Summer"
+  instructor    String?            // null = aggregate, "Shewchuk" = instructor-specific
+  instructorKey String             // computed: instructor ?? "__all__", used for unique constraint
+  average       Float?
+  pnpPercentage Float?
+  distribution  Json
+  btCourse      BerkeleyTimeCourse @relation(fields: [btCourseId], references: [id], onDelete: Cascade)
+
+  @@unique([btCourseId, year, semester, instructorKey])
+  @@index([btCourseId])
+}
+
+// ═══════════════════════════════════════════════
+// SYLLABUS & GRADE PROJECTION
+// ═══════════════════════════════════════════════
+
+model Syllabus {
+  id                String           @id @default(cuid())
+  courseId          String           @unique @map("course_id")
+  source            String           // "canvas" | "website" | "manual"
+  rawText           String           @db.Text
+  extractedAt       DateTime         @default(now()) @map("extracted_at")
+  confirmedAt       DateTime?        @map("confirmed_at")
+  confirmedBy       String?          @map("confirmed_by")
+  isCurved          Boolean          @default(false) @map("is_curved")
+  curveDescription  String?          @map("curve_description")
+  course            Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  componentGroups   ComponentGroup[]
+  gradeScale        GradeScale[]
+  clobberPolicies   ClobberPolicy[]
+
+  @@map("syllabi")
+}
+
+model ComponentGroup {
+  id           String                   @id @default(cuid())
+  syllabusId   String                   @map("syllabus_id")
+  name         String
+  weight       Float
+  dropLowest   Int                      @default(0) @map("drop_lowest")
+  isBestOf     Boolean                  @default(false) @map("is_best_of")
+  isExam       Boolean                  @default(false) @map("is_exam")
+  syllabus     Syllabus                 @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
+  assignments  AssignmentGroupMapping[]
+
+  @@index([syllabusId])
+  @@map("component_groups")
+}
+
+model AssignmentGroupMapping {
+  id               String         @id @default(cuid())
+  assignmentId     String         @map("assignment_id")
+  componentGroupId String         @map("component_group_id")
+  assignment       Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  componentGroup   ComponentGroup @relation(fields: [componentGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, componentGroupId])
+  @@map("assignment_group_mappings")
+}
+
+model GradeScale {
+  id         String   @id @default(cuid())
+  syllabusId String   @map("syllabus_id")
+  letter     String
+  minScore   Float    @map("min_score")
+  maxScore   Float    @map("max_score")
+  isPoints   Boolean  @default(false) @map("is_points")
+  syllabus   Syllabus @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
+
+  @@index([syllabusId])
+  @@map("grade_scales")
+}
+
+model ClobberPolicy {
+  id               String   @id @default(cuid())
+  syllabusId       String   @map("syllabus_id")
+  sourceName       String   @map("source_name")
+  targetName       String   @map("target_name")
+  comparisonType   String   @map("comparison_type")
+  conditionText    String   @map("condition_text")
+  syllabus         Syllabus @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
+
+  @@index([syllabusId])
+  @@map("clobber_policies")
+}
+
+model ExamStat {
+  id           String     @id @default(cuid())
+  assignmentId String     @map("assignment_id")
+  mean         Float
+  stdDev       Float      @map("std_dev")
+  source       String
+  edThreadId   String?    @map("ed_thread_id")
+  postedAt     DateTime   @default(now()) @map("posted_at")
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, source])
+  @@map("exam_stats")
+}
+
+model AssignmentOverride {
+  id               String          @id @default(cuid())
+  assignmentId     String          @map("assignment_id")
+  userId           String          @map("user_id")
+  excludeFromCalc  Boolean         @default(false) @map("exclude_from_calc")
+  overrideMaxScore Float?          @map("override_max_score")
+  overrideDueDate  DateTime?       @map("override_due_date")
+  overrideGroupId  String?         @map("override_group_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  assignment       Assignment      @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, userId])
+  @@index([userId])
+  @@index([assignmentId])
+  @@map("assignment_overrides")
+}
