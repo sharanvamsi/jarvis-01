@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     where: { id: session.user.id },
     select: { currentSemester: true },
   })
-  const currentSemester = user?.currentSemester ?? 'SP26'
+  const currentSemester = user?.currentSemester ?? ''
 
   // Validate token by fetching courses from Canvas
   let courses

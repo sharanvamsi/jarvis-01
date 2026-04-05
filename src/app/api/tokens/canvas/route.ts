@@ -22,12 +22,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const { token } = await req.json()
+  const { token, userExpiresAt } = await req.json()
   if (!token || typeof token !== "string") {
     return NextResponse.json({ error: "Token required" }, { status: 400 })
   }
 
   const encrypted = encrypt(token.trim())
+  const expiryDate = userExpiresAt ? new Date(userExpiresAt) : null
 
   await db.syncToken.upsert({
     where: {
@@ -36,11 +37,12 @@ export async function POST(req: NextRequest) {
         service: "canvas",
       },
     },
-    update: { accessToken: encrypted },
+    update: { accessToken: encrypted, userExpiresAt: expiryDate },
     create: {
       userId: session.user.id,
       service: "canvas",
       accessToken: encrypted,
+      userExpiresAt: expiryDate,
     },
   })
 

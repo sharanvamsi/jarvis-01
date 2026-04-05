@@ -24,7 +24,7 @@ export default function GradescopeCard() {
 
   const fetchStatus = useCallback(() => {
     fetch('/api/tokens/gradescope/status')
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch status')))
       .then((data: ConnectionStatus) => { setStatus(data); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
@@ -46,7 +46,12 @@ export default function GradescopeCard() {
   }
 
   async function handleDisconnect() {
-    await fetch('/api/tokens/gradescope', { method: 'DELETE' });
+    try {
+      const res = await fetch('/api/tokens/gradescope', { method: 'DELETE' });
+      if (!res.ok) return;
+    } catch {
+      return;
+    }
     setShowDisconnect(false);
     setStatus({ connected: false, lastSync: null });
   }

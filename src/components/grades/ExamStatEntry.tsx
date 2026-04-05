@@ -19,20 +19,28 @@ export default function ExamStatEntry({
   const [mean, setMean] = useState(existingStat?.mean?.toString() ?? '')
   const [stdDev, setStdDev] = useState(existingStat?.stdDev?.toString() ?? '')
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function handleSave() {
     const m = parseFloat(mean)
     const s = parseFloat(stdDev)
     if (isNaN(m) || isNaN(s) || s <= 0) return
     setSaving(true)
+    setError(null)
     try {
-      await fetch('/api/exam-stats', {
+      const res = await fetch('/api/exam-stats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assignmentId, mean: m, stdDev: s }),
       })
+      if (!res.ok) {
+        setError('Failed to save')
+        return
+      }
       onSaved(m, s)
       setEditing(false)
+    } catch {
+      setError('Network error')
     } finally {
       setSaving(false)
     }
@@ -102,6 +110,9 @@ export default function ExamStatEntry({
           {saving ? 'saving...' : 'save'}
         </button>
       </div>
+      {error && (
+        <p className="text-[11px] text-red-400">{error}</p>
+      )}
     </div>
   )
 }

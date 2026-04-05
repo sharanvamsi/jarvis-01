@@ -112,9 +112,17 @@ export default function SyllabusManualEntry({
   }
 
   function updateGroup(tempId: string, field: keyof ComponentGroupInput, value: string | boolean) {
-    setGroups(g => g.map(group =>
-      group.tempId === tempId ? { ...group, [field]: value } : group
-    ))
+    setGroups(g => g.map(group => {
+      if (group.tempId !== tempId) return group
+      const updated = { ...group, [field]: value }
+      // Auto-check isExam when name contains exam keywords
+      if (field === 'name' && typeof value === 'string') {
+        const lower = value.toLowerCase()
+        const isExamName = /\b(exam|midterm|final|mt\d|quiz)\b/.test(lower)
+        updated.isExam = isExamName
+      }
+      return updated
+    }))
   }
 
   function removeGroup(tempId: string) {
@@ -221,13 +229,26 @@ export default function SyllabusManualEntry({
           </div>
 
           {isCurved && (
-            <input
-              type="text"
-              value={curveDescription}
-              onChange={e => setCurveDescription(e.target.value)}
-              placeholder="e.g. curved to B+ median (optional)"
-              className="w-full bg-[#161616] border border-[#1F1F1F] rounded px-3 py-1.5 text-xs text-[#F5F5F5] placeholder-[#525252]"
-            />
+            <>
+              <input
+                type="text"
+                value={curveDescription}
+                onChange={e => setCurveDescription(e.target.value)}
+                placeholder="e.g. curved to B+ median (optional)"
+                className="w-full bg-[#161616] border border-[#1F1F1F] rounded px-3 py-1.5 text-xs text-[#F5F5F5] placeholder-[#525252]"
+              />
+              <div className="flex items-start gap-2 bg-[#161616] border border-amber-500/20 rounded p-3">
+                <span className="text-amber-500 text-xs mt-0.5">{'\u26A0'}</span>
+                <div>
+                  <p className="text-xs text-[#F5F5F5]">This is a curved course</p>
+                  <p className="text-[11px] text-[#A3A3A3] mt-0.5">
+                    Create one component per exam (e.g. &ldquo;Midterm 1&rdquo; at 12%, &ldquo;Midterm 2&rdquo; at 12%).
+                    Do not combine exams into a single group &mdash; each exam needs its own weight
+                    for accurate grade projection.
+                  </p>
+                </div>
+              </div>
+            </>
           )}
 
           {/* Component groups */}

@@ -64,9 +64,9 @@ export default function Settings() {
           Data Sources
         </h2>
         <CanvasCard />
-        <EdCard />
-        <GradescopeCard />
         <GoogleCalendarCard />
+        <GradescopeCard />
+        <EdCard />
         <CourseWebsitesCard />
 
         {/* Syllabus */}

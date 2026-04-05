@@ -10,10 +10,11 @@ interface Step {
 
 interface Props {
   steps: Step[];
+  defaultOpen?: boolean;
 }
 
-export default function SetupGuide({ steps }: Props) {
-  const [open, setOpen] = useState(false);
+export default function SetupGuide({ steps, defaultOpen = false }: Props) {
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <div className="mt-3">

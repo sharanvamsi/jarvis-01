@@ -19,29 +19,32 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Archive to DeletedUser table
-    await db.deletedUser.create({
-      data: {
-        originalUserId: user.id,
-        email: user.email,
-        emailVerified: user.emailVerified,
-        name: user.name,
-        image: user.image,
-        currentSemester: user.currentSemester,
-        onboardingDone: user.onboardingDone,
-        gradescopeConnected: user.gradescopeConnected,
-        lastSyncAt: user.lastSyncAt,
-        originalCreatedAt: user.createdAt,
-        originalUpdatedAt: user.updatedAt,
-        deletionReason: reason ?? null,
-      },
+    // Wrap all operations in a transaction for consistency
+    await db.$transaction(async (tx) => {
+      // Archive to DeletedUser table
+      await tx.deletedUser.create({
+        data: {
+          originalUserId: user.id,
+          email: user.email,
+          emailVerified: user.emailVerified,
+          name: user.name,
+          image: user.image,
+          currentSemester: user.currentSemester,
+          onboardingDone: user.onboardingDone,
+          gradescopeConnected: user.gradescopeConnected,
+          lastSyncAt: user.lastSyncAt,
+          originalCreatedAt: user.createdAt,
+          originalUpdatedAt: user.updatedAt,
+          deletionReason: reason ?? null,
+        },
+      });
+
+      // Delete SyncMetadata (no cascade relation to User)
+      await tx.syncMetadata.deleteMany({ where: { userId } });
+
+      // Delete User — cascades all 19 related tables
+      await tx.user.delete({ where: { id: userId } });
     });
-
-    // Delete SyncMetadata (no cascade relation to User)
-    await db.syncMetadata.deleteMany({ where: { userId } });
-
-    // Delete User — cascades all 19 related tables
-    await db.user.delete({ where: { id: userId } });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

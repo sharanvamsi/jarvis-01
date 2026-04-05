@@ -90,12 +90,36 @@ export default function GradeBreakdown({ breakdown, method, expanded, onToggle }
                   </div>
                 </div>
 
-                {/* Exam stats detail for curved */}
-                {method === 'curved' && group.isExam && group.examMean !== null && group.examStdDev !== null && (
-                  <div className="flex justify-end">
-                    <span className="text-[10px] text-[#525252]">
-                      {'\u03BC'}={group.examMean.toFixed(1)} {'\u03C3'}={group.examStdDev.toFixed(1)}
-                    </span>
+                {/* Per-exam assignment detail for curved */}
+                {method === 'curved' && group.isExam && group.examAssignments.length > 0 && (
+                  <div className="mt-1 bg-[#0D0D0D] rounded -mx-1 px-1">
+                    {group.examAssignments.map(ea => (
+                      <div key={ea.name} className="flex items-center justify-between py-1">
+                        <span className="text-[11px] text-[#A3A3A3] truncate mr-2">{ea.name}</span>
+                        <div className="flex items-center gap-3 shrink-0">
+                          {ea.score !== null && (
+                            <span className="text-[11px] text-[#A3A3A3]">
+                              {ea.score} pts
+                            </span>
+                          )}
+                          {ea.mean !== null && ea.stdDev !== null && (
+                            <span className="text-[10px] text-[#525252]">
+                              {'\u03BC'}={ea.mean.toFixed(1)} {'\u03C3'}={ea.stdDev.toFixed(1)}
+                            </span>
+                          )}
+                          {ea.zScore !== null && (
+                            <span className={`text-[11px] font-medium ${
+                              ea.zScore >= 0 ? 'text-emerald-500' : 'text-red-400'
+                            }`}>
+                              {ea.zScore >= 0 ? '+' : ''}{ea.zScore.toFixed(2)}{'\u03C3'}
+                            </span>
+                          )}
+                          {ea.mean === null && (
+                            <span className="text-[10px] text-amber-500">stats needed</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
 

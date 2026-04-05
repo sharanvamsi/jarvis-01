@@ -513,100 +513,151 @@ export async function getGradesPageData(userId: string) {
       .filter((c) => c.isCurrentSemester)
       .sort((a, b) => a.courseCode.localeCompare(b.courseCode))
 
-    // Fetch BT snapshots for each course
-    const coursesWithBT = await Promise.all(
-      courses.map(async (course) => {
-        const parsed = parseCourseCodeForBT(course.courseCode)
-        const [snapshots, syllabus] = await Promise.all([
-          parsed
-            ? getBerkeleyTimeSnapshots(parsed.subject, parsed.courseNumber)
-            : Promise.resolve([]),
-          getSyllabusForCourse(course.id),
-        ])
-        return {
-          id: course.id,
-          courseCode: course.courseCode,
-          courseName: course.courseName,
-          assignments: course.assignments.map((a) => {
-            const ua = a.userAssignments[0]
-            const override = a.overrides?.[0] ?? null
-            const groupMapping = a.groupMappings?.[0] ?? null
-            return {
-              id: a.id,
-              name: a.name,
-              dueDate: a.dueDate ? a.dueDate.toISOString() : null,
-              pointsPossible: a.pointsPossible,
-              score: ua?.score ?? null,
-              status: ua?.status ?? "ungraded",
-              isLate: ua?.isLate ?? false,
-              assignmentType: a.assignmentType ?? null,
-              source: a.canvasId
-                ? "Canvas"
-                : a.gradescopeId
-                  ? "Gradescope"
-                  : "Website",
-              groupName: groupMapping?.componentGroup?.name ?? null,
-              override: override
-                ? {
-                    excludeFromCalc: override.excludeFromCalc,
-                    overrideMaxScore: override.overrideMaxScore,
-                    overrideDueDate: override.overrideDueDate?.toISOString() ?? null,
-                    overrideGroupId: override.overrideGroupId,
-                  }
-                : null,
+    // Batch-fetch BT snapshots and syllabi (2 queries total, not 2 per course)
+    const courseIds = courses.map((c) => c.id)
+
+    // Parse course codes for BT lookup
+    const btParsed = courses
+      .map((c) => ({ courseId: c.id, parsed: parseCourseCodeForBT(c.courseCode) }))
+      .filter((c): c is { courseId: string; parsed: { subject: string; courseNumber: string } } =>
+        c.parsed !== null
+      )
+
+    // Single query: all BT courses + snapshots for all enrolled courses
+    const btCourses = btParsed.length > 0
+      ? await db.berkeleyTimeCourse.findMany({
+          where: {
+            OR: btParsed.map((p) => ({
+              subject: p.parsed.subject,
+              courseNumber: p.parsed.courseNumber,
+            })),
+          },
+          include: {
+            snapshots: { orderBy: [{ year: "desc" }, { semester: "asc" }] },
+          },
+        })
+      : []
+
+    // Build BT lookup: courseId -> snapshots
+    const btByCourseId = new Map<string, typeof btCourses[0]["snapshots"]>()
+    for (const parsed of btParsed) {
+      const bt = btCourses.find(
+        (b) => b.subject === parsed.parsed.subject && b.courseNumber === parsed.parsed.courseNumber
+      )
+      if (bt) btByCourseId.set(parsed.courseId, bt.snapshots)
+    }
+
+    // Single query: all syllabi for all enrolled courses
+    const allSyllabi = await db.syllabus.findMany({
+      where: { courseId: { in: courseIds } },
+      include: {
+        componentGroups: {
+          include: {
+            assignments: {
+              include: {
+                assignment: {
+                  include: {
+                    userAssignments: userId ? { where: { userId } } : true,
+                    examStats: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        gradeScale: true,
+        clobberPolicies: true,
+      },
+    })
+    const syllabusByCourseId = new Map(allSyllabi.map((s) => [s.courseId, s]))
+
+    // Map results using the lookup maps (no additional queries)
+    const coursesWithBT = courses.map((course) => {
+      const snapshots = btByCourseId.get(course.id) ?? []
+      const syllabus = syllabusByCourseId.get(course.id) ?? null
+      return {
+        id: course.id,
+        courseCode: course.courseCode,
+        courseName: course.courseName,
+        assignments: course.assignments.map((a) => {
+          const ua = a.userAssignments[0]
+          const override = a.overrides?.[0] ?? null
+          const groupMapping = a.groupMappings?.[0] ?? null
+          return {
+            id: a.id,
+            name: a.name,
+            dueDate: a.dueDate ? a.dueDate.toISOString() : null,
+            pointsPossible: a.pointsPossible,
+            score: ua?.score ?? null,
+            status: ua?.status ?? "ungraded",
+            isLate: ua?.isLate ?? false,
+            assignmentType: a.assignmentType ?? null,
+            source: a.canvasId
+              ? "Canvas"
+              : a.gradescopeId
+                ? "Gradescope"
+                : "Website",
+            groupName: groupMapping?.componentGroup?.name ?? null,
+            override: override
+              ? {
+                  excludeFromCalc: override.excludeFromCalc,
+                  overrideMaxScore: override.overrideMaxScore,
+                  overrideDueDate: override.overrideDueDate?.toISOString() ?? null,
+                  overrideGroupId: override.overrideGroupId,
+                }
+              : null,
+          }
+        }),
+        btSnapshots: snapshots.map((s) => ({
+          id: s.id,
+          year: s.year,
+          semester: s.semester,
+          instructor: s.instructor,
+          average: s.average,
+          pnpPercentage: s.pnpPercentage,
+          distribution: s.distribution as { letter: string; percentage: number; count: number }[],
+        })),
+        syllabus: syllabus
+          ? {
+              id: syllabus.id,
+              isCurved: syllabus.isCurved,
+              curveDescription: syllabus.curveDescription,
+              confirmedAt: syllabus.confirmedAt?.toISOString() ?? null,
+              componentGroups: syllabus.componentGroups.map((g) => ({
+                id: g.id,
+                name: g.name,
+                weight: g.weight,
+                dropLowest: g.dropLowest,
+                isBestOf: g.isBestOf,
+                isExam: g.isExam,
+                assignmentIds: g.assignments.map((m) => m.assignmentId),
+              })),
+              gradeScale: syllabus.gradeScale.map((gs) => ({
+                letter: gs.letter,
+                minScore: gs.minScore,
+                maxScore: gs.maxScore,
+                isPoints: gs.isPoints,
+              })),
+              clobberPolicies: syllabus.clobberPolicies.map((p) => ({
+                sourceName: p.sourceName,
+                targetName: p.targetName,
+                comparisonType: p.comparisonType as 'raw' | 'zscore',
+                conditionText: p.conditionText,
+              })),
+              examStats: syllabus.componentGroups.flatMap((g) =>
+                g.assignments
+                  .filter((m) => m.assignment.examStats.length > 0)
+                  .map((m) => ({
+                    assignmentId: m.assignmentId,
+                    mean: m.assignment.examStats[0].mean,
+                    stdDev: m.assignment.examStats[0].stdDev,
+                    source: m.assignment.examStats[0].source,
+                  }))
+              ),
             }
-          }),
-          btSnapshots: snapshots.map((s) => ({
-            id: s.id,
-            year: s.year,
-            semester: s.semester,
-            instructor: s.instructor,
-            average: s.average,
-            pnpPercentage: s.pnpPercentage,
-            distribution: s.distribution as { letter: string; percentage: number; count: number }[],
-          })),
-          syllabus: syllabus
-            ? {
-                id: syllabus.id,
-                isCurved: syllabus.isCurved,
-                curveDescription: syllabus.curveDescription,
-                confirmedAt: syllabus.confirmedAt?.toISOString() ?? null,
-                componentGroups: syllabus.componentGroups.map((g) => ({
-                  id: g.id,
-                  name: g.name,
-                  weight: g.weight,
-                  dropLowest: g.dropLowest,
-                  isBestOf: g.isBestOf,
-                  isExam: g.isExam,
-                  assignmentIds: g.assignments.map((m) => m.assignmentId),
-                })),
-                gradeScale: syllabus.gradeScale.map((gs) => ({
-                  letter: gs.letter,
-                  minScore: gs.minScore,
-                  maxScore: gs.maxScore,
-                  isPoints: gs.isPoints,
-                })),
-                clobberPolicies: syllabus.clobberPolicies.map((p) => ({
-                  sourceName: p.sourceName,
-                  targetName: p.targetName,
-                  comparisonType: p.comparisonType as 'raw' | 'zscore',
-                  conditionText: p.conditionText,
-                })),
-                examStats: syllabus.componentGroups.flatMap((g) =>
-                  g.assignments
-                    .filter((m) => m.assignment.examStats.length > 0)
-                    .map((m) => ({
-                      assignmentId: m.assignmentId,
-                      mean: m.assignment.examStats[0].mean,
-                      stdDev: m.assignment.examStats[0].stdDev,
-                      source: m.assignment.examStats[0].source,
-                    }))
-                ),
-              }
-            : null,
-        }
-      })
-    )
+          : null,
+      }
+    })
 
     return coursesWithBT
   } catch (error) {
@@ -637,7 +688,7 @@ export async function getBerkeleyTimeSnapshots(
 }
 
 // ── SYLLABUS ──────────────────────────────────────────────────
-export async function getSyllabusForCourse(courseId: string) {
+export async function getSyllabusForCourse(courseId: string, userId?: string) {
   try {
     return await db.syllabus.findUnique({
       where: { courseId },
@@ -648,7 +699,7 @@ export async function getSyllabusForCourse(courseId: string) {
               include: {
                 assignment: {
                   include: {
-                    userAssignments: true,
+                    userAssignments: userId ? { where: { userId } } : true,
                     examStats: true,
                   },
                 },

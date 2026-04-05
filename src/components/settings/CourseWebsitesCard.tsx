@@ -27,7 +27,7 @@ export default function CourseWebsitesCard() {
 
   useEffect(() => {
     fetch('/api/courses')
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch courses')))
       .then((data) => {
         const c = data.courses ?? [];
         setCourses(c);

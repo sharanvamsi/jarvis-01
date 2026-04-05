@@ -26,7 +26,7 @@ export default function GoogleCalendarCard() {
 
   const fetchStatus = useCallback(() => {
     fetch('/api/tokens/google/status')
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch status')))
       .then((data: GoogleCalStatus) => { setStatus(data); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
@@ -36,7 +36,8 @@ export default function GoogleCalendarCard() {
   async function handleReconnect() {
     setRevoking(true);
     try {
-      await fetch('/api/tokens/google/revoke', { method: 'POST' });
+      const res = await fetch('/api/tokens/google/revoke', { method: 'POST' });
+      if (!res.ok) { setRevoking(false); return; }
       await signIn('google', { callbackUrl: '/settings' });
     } catch { setRevoking(false); }
   }

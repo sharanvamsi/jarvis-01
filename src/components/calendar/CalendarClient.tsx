@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { ChevronLeft, ChevronRight, Calendar, Settings } from 'lucide-react'
 import Link from 'next/link'
+import { getCourseColor } from '@/lib/courseColors'
 
 type Assignment = {
   id: string
@@ -35,16 +36,6 @@ type CalendarClientProps = {
 }
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-function getCourseColor(code: string): string {
-  const map: Record<string, string> = {
-    'CS 162': '#3B82F6',
-    'CS 189': '#8B5CF6',
-    'UGBA 102A': '#F59E0B',
-    'UGBA 103': '#10B981',
-  }
-  return map[code] || '#6B7280'
-}
 
 function getMonday(weekOffset: number): Date {
   const now = new Date()

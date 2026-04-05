@@ -22,7 +22,8 @@ export default function Onboarding() {
   async function handleComplete(destination: '/settings' | '/') {
     setIsLoading(true);
     try {
-      await fetch('/api/onboarding/complete-simple', { method: 'POST' });
+      const res = await fetch('/api/onboarding/complete-simple', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
       router.push(destination);
     } catch {
       setIsLoading(false);
@@ -83,7 +84,8 @@ export default function Onboarding() {
                 Welcome to Jarvis, {firstName}!
               </h2>
               <p className="text-[#A3A3A3] text-sm mb-6">
-                Connect your data sources in Settings to start tracking assignments, grades, and calendar events.
+                Your data syncs automatically once connected.
+                Most students are up and running in under 2 minutes.
               </p>
 
               <div className="space-y-3 mb-6">
@@ -91,19 +93,19 @@ export default function Onboarding() {
                   <div className="w-6 h-6 rounded bg-[#1F1F1F] flex items-center justify-center shrink-0">
                     <span className="text-xs text-[#525252]">1</span>
                   </div>
-                  <span>Connect Canvas for assignments and grades</span>
+                  <span>Connect Canvas &mdash; paste your bCourses access token</span>
                 </div>
                 <div className="flex items-center gap-3 text-[#A3A3A3] text-sm">
                   <div className="w-6 h-6 rounded bg-[#1F1F1F] flex items-center justify-center shrink-0">
                     <span className="text-xs text-[#525252]">2</span>
                   </div>
-                  <span>Add Ed, Gradescope, and course websites</span>
+                  <span>Optionally add Gradescope and Ed Discussion</span>
                 </div>
                 <div className="flex items-center gap-3 text-[#A3A3A3] text-sm">
                   <div className="w-6 h-6 rounded bg-[#1F1F1F] flex items-center justify-center shrink-0">
                     <span className="text-xs text-[#525252]">3</span>
                   </div>
-                  <span>Upload your syllabi for grade projections</span>
+                  <span>Confirm your grade weights on the Grades page</span>
                 </div>
               </div>
 

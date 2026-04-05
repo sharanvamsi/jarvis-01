@@ -28,7 +28,7 @@ export function WelcomeBanner() {
             Welcome to Jarvis!
           </div>
           <div className="text-[#A3A3A3] text-sm">
-            Your academic command center is ready. All data shown is mock data for demonstration purposes.
+            Your academic command center is ready. Connect your data sources in Settings to get started.
           </div>
         </div>
         <button

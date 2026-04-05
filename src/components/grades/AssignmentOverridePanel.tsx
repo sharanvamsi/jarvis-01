@@ -45,6 +45,7 @@ export default function AssignmentOverridePanel({
   const [isPending, startTransition] = useTransition();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
@@ -76,8 +77,9 @@ export default function AssignmentOverridePanel({
   async function handleAddAssignment() {
     if (!newAssignment.name.trim()) return
     setAddSaving(true)
+    setMutationError(null)
     try {
-      await fetch('/api/assignments/create', {
+      const res = await fetch('/api/assignments/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -94,6 +96,11 @@ export default function AssignmentOverridePanel({
           assignmentType: deriveAssignmentType(newAssignment.groupId),
         }),
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setMutationError(err.error ?? 'Failed to add assignment')
+        return
+      }
       setNewAssignment({
         name: '',
         pointsPossible: '',
@@ -103,6 +110,8 @@ export default function AssignmentOverridePanel({
       })
       setShowAddForm(false)
       startTransition(() => router.refresh())
+    } catch {
+      setMutationError('Network error — could not add assignment')
     } finally {
       setAddSaving(false)
     }
@@ -144,11 +153,12 @@ export default function AssignmentOverridePanel({
 
   async function saveOverride(assignmentId: string, overrideEdits?: typeof edits[string]) {
     setSaving(assignmentId);
+    setMutationError(null);
     const edit = overrideEdits ?? edits[assignmentId];
     // Handle __exclude__ selection from group dropdown (B6)
     const isExcludeViaGroup = edit.overrideGroupId === '__exclude__';
     try {
-      await fetch('/api/assignments/override', {
+      const res = await fetch('/api/assignments/override', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,6 +171,11 @@ export default function AssignmentOverridePanel({
           overrideGroupId: isExcludeViaGroup ? null : (edit.overrideGroupId || null),
         })
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setMutationError(err.error ?? 'Failed to save override');
+        return;
+      }
       // Sync local state if __exclude__ was selected
       if (isExcludeViaGroup) {
         setEdits(prev => ({
@@ -173,6 +188,8 @@ export default function AssignmentOverridePanel({
         }));
       }
       startTransition(() => router.refresh());
+    } catch {
+      setMutationError('Network error — could not save override');
     } finally {
       setSaving(null);
     }
@@ -180,12 +197,18 @@ export default function AssignmentOverridePanel({
 
   async function resetOverride(assignmentId: string) {
     setSaving(assignmentId);
+    setMutationError(null);
     try {
-      await fetch('/api/assignments/override', {
+      const res = await fetch('/api/assignments/override', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assignmentId })
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setMutationError(err.error ?? 'Failed to reset override');
+        return;
+      }
       setEdits(prev => ({
         ...prev,
         [assignmentId]: {
@@ -196,6 +219,8 @@ export default function AssignmentOverridePanel({
         }
       }));
       startTransition(() => router.refresh());
+    } catch {
+      setMutationError('Network error — could not reset override');
     } finally {
       setSaving(null);
     }
@@ -203,12 +228,18 @@ export default function AssignmentOverridePanel({
 
   async function resetAllOverrides() {
     setSaving('all');
+    setMutationError(null);
     try {
-      await fetch('/api/assignments/override/reset-all', {
+      const res = await fetch('/api/assignments/override/reset-all', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ courseId })
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setMutationError(err.error ?? 'Failed to reset all overrides');
+        return;
+      }
       const reset: Record<string, {
         excludeFromCalc: boolean;
         overrideMaxScore: string;
@@ -225,6 +256,8 @@ export default function AssignmentOverridePanel({
       }
       setEdits(reset);
       startTransition(() => router.refresh());
+    } catch {
+      setMutationError('Network error — could not reset overrides');
     } finally {
       setSaving(null);
     }
@@ -273,6 +306,16 @@ export default function AssignmentOverridePanel({
             </button>
           </div>
         </div>
+
+        {/* Mutation error banner */}
+        {mutationError && (
+          <div className="mx-4 mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded flex items-center justify-between">
+            <span className="text-xs text-red-400">{mutationError}</span>
+            <button onClick={() => setMutationError(null)} className="text-red-400 hover:text-red-300 ml-2 shrink-0">
+              <X size={12} />
+            </button>
+          </div>
+        )}
 
         {/* Assignment list */}
         <div className="flex-1 overflow-y-auto">

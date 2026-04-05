@@ -8,27 +8,38 @@ export async function GET() {
     return NextResponse.json({ connected: false, lastSync: null })
   }
 
+  const userId = session.user.id
+
   const token = await db.syncToken.findUnique({
-    where: {
-      userId_service: {
-        userId: session.user.id,
-        service: "canvas",
-      },
-    },
+    where: { userId_service: { userId, service: "canvas" } },
   })
 
-  let lastSync: string | null = null
-  if (token) {
-    const log = await db.syncLog.findFirst({
-      where: {
-        userId: session.user.id,
-        service: "canvas",
-        status: "success",
-      },
-      orderBy: { completedAt: "desc" },
-    })
-    lastSync = log?.completedAt?.toISOString() ?? null
+  if (!token) {
+    return NextResponse.json({ connected: false, lastSync: null })
   }
 
-  return NextResponse.json({ connected: !!token, lastSync })
+  const [successLog, latestLog] = await Promise.all([
+    db.syncLog.findFirst({
+      where: { userId, service: "canvas", status: "success" },
+      orderBy: { completedAt: "desc" },
+    }),
+    db.syncLog.findFirst({
+      where: { userId, service: "canvas" },
+      orderBy: { startedAt: "desc" },
+    }),
+  ])
+
+  const expiresInDays = token.userExpiresAt
+    ? Math.ceil((token.userExpiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null
+
+  return NextResponse.json({
+    connected: true,
+    lastSync: successLog?.completedAt?.toISOString() ?? null,
+    userExpiresAt: token.userExpiresAt?.toISOString() ?? null,
+    expiresInDays,
+    syncStatus: latestLog?.status ?? null,
+    syncError: latestLog?.status === 'failed' ? (latestLog.errorMessage ?? null) : null,
+    recordsFetched: successLog?.recordsFetched ?? 0,
+  })
 }

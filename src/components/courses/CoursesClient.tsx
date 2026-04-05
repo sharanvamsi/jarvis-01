@@ -6,6 +6,7 @@ import { BookOpen, FileText, Mail, MessageSquare, Users, ExternalLink, Settings 
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { SourceBadge } from '@/components/ui/SourceBadge'
 import { stripHtml, relativeTime } from '@/lib/utils'
+import { getCourseColor } from '@/lib/courseColors'
 
 type UserAssignment = {
   id: string
@@ -70,14 +71,6 @@ type Course = {
   announcements: Announcement[]
   edThreads: EdThread[]
   courseStaff?: CourseStaff[]
-}
-
-function getCourseColor(courseCode: string): string {
-  if (courseCode.includes('162')) return '#3B82F6'
-  if (courseCode.includes('189')) return '#8B5CF6'
-  if (courseCode.includes('102A')) return '#F59E0B'
-  if (courseCode.includes('103')) return '#10B981'
-  return '#6B7280'
 }
 
 function formatDate(date: Date | null | undefined): string {
@@ -215,7 +208,7 @@ export function CoursesClient({ courses }: { courses: Course[] }) {
               className="px-2.5 py-1 rounded text-xs font-medium"
               style={{ backgroundColor: `${courseColor}20`, color: courseColor }}
             >
-              {selectedCourse.term ?? 'SP26'}
+              {selectedCourse.term ?? ''}
             </span>
             {selectedCourse.websiteUrl && (
               <a

@@ -71,6 +71,14 @@ export interface ProjectionInput {
   btDistribution: BTDistributionItem[] | null
 }
 
+export interface ExamAssignmentBreakdown {
+  name: string
+  score: number | null
+  mean: number | null
+  stdDev: number | null
+  zScore: number | null
+}
+
 export interface GroupBreakdown {
   groupId: string
   groupName: string
@@ -85,6 +93,7 @@ export interface GroupBreakdown {
   examZScore: number | null // z-score for exam groups in curved mode
   examMean: number | null   // exam mean for display
   examStdDev: number | null // exam std dev for display
+  examAssignments: ExamAssignmentBreakdown[] // per-assignment z-scores for curved
 }
 
 export interface ProjectionResult {
@@ -222,6 +231,7 @@ function computeWeightedProjection(
         examZScore: null,
         examMean: null,
         examStdDev: null,
+        examAssignments: [],
       })
       continue
     }
@@ -266,6 +276,7 @@ function computeWeightedProjection(
       examZScore: null,
       examMean: null,
       examStdDev: null,
+      examAssignments: [],
     })
   }
 
@@ -367,34 +378,43 @@ function computeCurvedProjection(
   const examZScores = new Map<string, number | null>()
 
   for (const group of examGroups) {
-    const examAssignment = group.assignments.find(
-      (a) => a.examStat != null
-    )
+    // Get all assignments in this group that have stats and scores
+    const gradedExams = group.assignments
+      .filter(a => a.examStat != null && !a.excludeFromCalc)
+      .map(a => {
+        const score = getEffectiveScore(a)
+        if (score === null || !a.examStat || a.examStat.stdDev === 0) return null
+        const z = (score - a.examStat.mean) / a.examStat.stdDev
+        const maxPts = getEffectiveMaxScore(a) ?? 100
+        return { z, maxPts, name: a.name, mean: a.examStat.mean, stdDev: a.examStat.stdDev }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
 
-    if (!examAssignment?.examStat) {
-      pendingExams.push(group.name)
+    if (gradedExams.length === 0) {
+      // Check if any exam in this group exists but just has no stats yet
+      const hasUngradedExams = group.assignments.some(
+        a => !a.excludeFromCalc && a.examStat == null
+      )
+      if (hasUngradedExams || group.assignments.length === 0) {
+        pendingExams.push(group.name)
+      }
       examZScores.set(group.id, null)
       continue
     }
 
-    const effectiveScore = getEffectiveScore(examAssignment)
-    if (effectiveScore === null) {
-      pendingExams.push(group.name)
-      examZScores.set(group.id, null)
-      continue
+    // If multiple exams in one group, weight by points possible
+    // Single exam: just use its z-score directly
+    let groupZ: number
+    if (gradedExams.length === 1) {
+      groupZ = gradedExams[0].z
+    } else {
+      const totalPts = gradedExams.reduce((s, e) => s + e.maxPts, 0)
+      groupZ = totalPts > 0
+        ? gradedExams.reduce((s, e) => s + e.z * (e.maxPts / totalPts), 0)
+        : gradedExams.reduce((s, e) => s + e.z, 0) / gradedExams.length
     }
 
-    // Guard against stdDev=0 which would produce NaN/Infinity
-    if (examAssignment.examStat.stdDev === 0) {
-      pendingExams.push(group.name)
-      examZScores.set(group.id, null)
-      continue
-    }
-
-    const z =
-      (effectiveScore - examAssignment.examStat.mean) /
-      examAssignment.examStat.stdDev
-    examZScores.set(group.id, z)
+    examZScores.set(group.id, groupZ)
   }
 
   // Apply clobber policies
@@ -432,9 +452,27 @@ function computeCurvedProjection(
   // Build breakdown for curved projection
   const curvedBreakdown: GroupBreakdown[] = groups.map((group) => {
     const z = examZScores.get(group.id)
-    // Find exam stat for this group's exam assignment
-    const examAssignment = group.assignments.find(a => a.examStat != null)
-    const stat = examAssignment?.examStat ?? null
+    // Find first exam stat for summary display
+    const firstStatAssignment = group.assignments.find(a => a.examStat != null)
+    const stat = firstStatAssignment?.examStat ?? null
+
+    // Build per-assignment detail for exam groups
+    const examAssignmentDetails: ExamAssignmentBreakdown[] = group.isExam
+      ? group.assignments.map(a => {
+          const score = getEffectiveScore(a)
+          const aZ = (score !== null && a.examStat && a.examStat.stdDev > 0)
+            ? (score - a.examStat.mean) / a.examStat.stdDev
+            : null
+          return {
+            name: a.name,
+            score,
+            mean: a.examStat?.mean ?? null,
+            stdDev: a.examStat?.stdDev ?? null,
+            zScore: aZ !== null ? Math.round(aZ * 100) / 100 : null,
+          }
+        })
+      : []
+
     return {
       groupId: group.id,
       groupName: group.name,
@@ -449,6 +487,7 @@ function computeCurvedProjection(
       examZScore: z !== null && z !== undefined ? Math.round(z * 100) / 100 : null,
       examMean: stat?.mean ?? null,
       examStdDev: stat?.stdDev ?? null,
+      examAssignments: examAssignmentDetails,
     }
   })
 

@@ -19,6 +19,7 @@ import {
   getDashboardStats,
   getTodaysOfficeHours,
   getUpcomingExams,
+  hasCanvasToken,
 } from '@/lib/data';
 
 export default async function Dashboard() {
@@ -36,6 +37,7 @@ export default async function Dashboard() {
     stats,
     todaysOfficeHours,
     upcomingExams,
+    canvasConnected,
   ] = await Promise.all([
     getUpcomingAssignments(user.id),
     getMissingAssignments(user.id),
@@ -47,6 +49,7 @@ export default async function Dashboard() {
     getDashboardStats(user.id),
     getTodaysOfficeHours(user.id),
     getUpcomingExams(user.id),
+    hasCanvasToken(user.id),
   ]);
 
   const now = new Date();
@@ -126,6 +129,28 @@ export default async function Dashboard() {
             subtitle="recent"
           />
         </div>
+
+        {!canvasConnected && (
+          <div className="mb-6 flex items-start gap-3 bg-[#111111] border border-blue-500/30 rounded-md p-4">
+            <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center shrink-0">
+              <span className="text-white text-sm font-bold">J</span>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-[#F5F5F5]">
+                Welcome to Jarvis &mdash; let&apos;s get your data connected
+              </p>
+              <p className="text-xs text-[#A3A3A3] mt-0.5">
+                Connect Canvas to see your assignments, grades, and upcoming deadlines.
+              </p>
+              <Link
+                href="/settings"
+                className="inline-flex items-center gap-1.5 mt-2 text-xs text-blue-400 hover:text-blue-300"
+              >
+                Connect Canvas &rarr;
+              </Link>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
           {/* LEFT COLUMN */}

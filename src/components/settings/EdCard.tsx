@@ -7,8 +7,8 @@ import SetupGuide from './SetupGuide';
 import { type ConnectionStatus, type SaveStatus, formatLastSync } from './types';
 
 const SETUP_STEPS = [
-  { text: 'Go to Ed API Tokens page', link: { label: 'edstem.org/us/settings/api-tokens', href: 'https://edstem.org/us/settings/api-tokens' } },
-  { text: 'Click "Generate Token"' },
+  { text: 'Go to', link: { label: 'edstem.org/us/settings/api-tokens', href: 'https://edstem.org/us/settings/api-tokens' } },
+  { text: 'Click "Generate new API token"' },
   { text: 'Copy the token and paste it above' },
 ];
 
@@ -22,7 +22,7 @@ export default function EdCard() {
 
   const fetchStatus = useCallback(() => {
     fetch('/api/tokens/ed/status')
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch status')))
       .then((data: ConnectionStatus) => { setStatus(data); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
@@ -44,7 +44,12 @@ export default function EdCard() {
   }
 
   async function handleDisconnect() {
-    await fetch('/api/tokens/ed', { method: 'DELETE' });
+    try {
+      const res = await fetch('/api/tokens/ed', { method: 'DELETE' });
+      if (!res.ok) return;
+    } catch {
+      return;
+    }
     setShowDisconnect(false);
     setStatus({ connected: false, lastSync: null });
   }
@@ -76,6 +81,26 @@ export default function EdCard() {
 
       {!status.connected && !showUpdate && (
         <div>
+          {/* Step-by-step instructions */}
+          <div className="mb-3 space-y-1.5">
+            <p className="text-xs font-medium text-[#F5F5F5]">How to get your Ed token:</p>
+            {[
+              { text: 'Go to ', link: 'https://edstem.org/us/settings/api-tokens', label: 'edstem.org/us/settings/api-tokens' },
+              { text: 'Click "Generate new API token"' },
+              { text: 'Copy the token and paste it below' },
+            ].map((step, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs text-[#A3A3A3]">
+                <span className="shrink-0 w-4 h-4 rounded-full bg-[#1F1F1F] text-[#525252] text-[10px] flex items-center justify-center mt-0.5">
+                  {i + 1}
+                </span>
+                <span>
+                  {step.link ? (
+                    <>{step.text}<a href={step.link} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">{step.label}</a></>
+                  ) : step.text}
+                </span>
+              </div>
+            ))}
+          </div>
           <input
             type="password"
             value={token}

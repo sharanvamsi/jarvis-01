@@ -39,8 +39,7 @@ export async function POST() {
 
     return NextResponse.json({ success: true })
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown error"
-    console.error("[revoke]", message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    console.error("[revoke]", error)
+    return NextResponse.json({ error: 'Failed to revoke token' }, { status: 500 })
   }
 }

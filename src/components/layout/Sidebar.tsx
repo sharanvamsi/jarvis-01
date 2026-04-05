@@ -3,6 +3,7 @@
 import { LayoutDashboard, BookOpen, GraduationCap, Calendar, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
@@ -14,6 +15,10 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const userName = session?.user?.name ?? 'Student';
+  const userInitial = userName[0]?.toUpperCase() ?? 'U';
+  const userEmail = session?.user?.email ?? '';
 
   return (
     <>
@@ -62,11 +67,13 @@ export function Sidebar() {
           <div className="p-4 border-t border-[#1F1F1F]">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-[#3B82F6] flex items-center justify-center text-white text-sm font-medium">
-                S
+                {userInitial}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-[#F5F5F5] text-sm font-medium truncate">Sharan</div>
-                <div className="text-[#A3A3A3] text-xs">Berkeley '27</div>
+                <div className="text-[#F5F5F5] text-sm font-medium truncate">{userName}</div>
+                <div className="text-[#A3A3A3] text-xs truncate">
+                  {userEmail.includes('berkeley.edu') ? 'UC Berkeley' : userEmail}
+                </div>
               </div>
               <div className="w-2 h-2 rounded-full bg-[#10B981]" />
             </div>
@@ -77,7 +84,7 @@ export function Sidebar() {
       {/* Mobile bottom navigation */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 border-t border-[#1F1F1F] bg-[#0A0A0A] z-50">
         <nav className="flex items-center justify-around">
-          {navItems.slice(0, 4).map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.path;
 

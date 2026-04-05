@@ -23,7 +23,19 @@ export async function POST(req: NextRequest) {
   try {
     await db.$transaction(async (tx) => {
       for (const course of courses) {
+        // Check if course already exists to protect its canvasId
+        const existing = await tx.course.findUnique({
+          where: {
+            courseCode_term: {
+              courseCode: course.courseCode,
+              term: course.term,
+            },
+          },
+          select: { canvasId: true },
+        })
+
         // Upsert Course record (shared across all users)
+        // Only set canvasId on create, or if not already set
         const upserted = await tx.course.upsert({
           where: {
             courseCode_term: {
@@ -40,9 +52,9 @@ export async function POST(req: NextRequest) {
             enrollmentState: 'active',
           },
           update: {
-            canvasId: course.canvasId,
             isCurrentSemester: true,
             enrollmentState: 'active',
+            ...(existing?.canvasId ? {} : { canvasId: course.canvasId }),
           },
         })
 

@@ -28,7 +28,7 @@ export default function DeleteAccountSection() {
 
   return (
     <div className="mt-10">
-      <h2 className="text-[#F5F5F5] text-sm font-medium mb-4">Danger Zone</h2>
+      <h2 className="text-[#F5F5F5] text-sm font-medium mb-4">Account Deletion</h2>
       <div className="bg-[#111111] border border-red-500/20 rounded-md p-6">
         {step === 'idle' && (
           <div className="flex items-center justify-between">
@@ -62,9 +62,9 @@ export default function DeleteAccountSection() {
               disabled={step === 'deleting'}
               className="w-full bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[#F5F5F5] text-sm px-3 py-2 placeholder-[#525252] outline-none focus:border-red-500/50 transition-colors resize-none mb-3 disabled:opacity-50"
             />
-            <div className="bg-red-500/5 border border-red-500/10 rounded p-3 mb-4">
-              <p className="text-red-400 text-xs font-medium mb-1.5">This will permanently delete:</p>
-              <ul className="text-[#A3A3A3] text-xs space-y-1">
+            <div className="bg-red-500/5 border border-red-500/10 rounded p-4 mb-4">
+              <p className="text-red-400 text-xs font-medium mb-2">This will permanently delete:</p>
+              <ul className="text-[#A3A3A3] text-xs space-y-1.5 list-disc list-inside">
                 <li>All synced courses, assignments, and grades</li>
                 <li>Calendar events and announcements</li>
                 <li>All connected service tokens</li>

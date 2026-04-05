@@ -74,9 +74,10 @@ model SyncToken {
   service      String // canvas, google, ed, gradescope
   accessToken  String    @map("access_token") // encrypted
   refreshToken String?   @map("refresh_token") // encrypted
-  expiresAt    DateTime? @map("expires_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  expiresAt      DateTime? @map("expires_at")
+  userExpiresAt  DateTime? @map("user_expires_at") // expiry date user set when creating token
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -159,6 +160,7 @@ model Assignment {
   examStats       ExamStat[]
   overrides       AssignmentOverride[]
 
+  @@index([courseId, isCurrentSemester, dueDate])
   @@map("assignments")
 }
 
@@ -197,6 +199,7 @@ model CanvasAnnouncement {
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@unique([canvasId])
+  @@index([courseId, postedAt])
   @@map("canvas_announcements")
 }
 
@@ -222,6 +225,7 @@ model EdThread {
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@unique([edThreadId])
+  @@index([courseId, threadType, postedAt])
   @@map("ed_threads")
 }
 
@@ -244,6 +248,7 @@ model CalendarEvent {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, googleEventId])
+  @@index([userId, startTime])
   @@map("calendar_events")
 }
 
@@ -298,6 +303,8 @@ model SyncLog {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId, service, status, completedAt])
+  @@index([userId, startedAt])
   @@map("sync_logs")
 }
 
@@ -508,6 +515,8 @@ model OfficeHour {
 
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
+  @@unique([courseId, dayOfWeek, startTime, staffName])
+  @@index([courseId, dayOfWeek])
   @@map("office_hours")
 }
 
@@ -523,6 +532,8 @@ model Exam {
 
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
+  @@unique([courseId, name, date])
+  @@index([courseId, date])
   @@map("exams")
 }
 
@@ -536,6 +547,7 @@ model CourseStaff {
 
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
+  @@unique([courseId, name, role])
   @@map("course_staff")
 }
 
@@ -627,6 +639,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId, provider])
   @@map("accounts")
 }
 
