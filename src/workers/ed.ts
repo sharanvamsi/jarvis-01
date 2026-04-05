@@ -1,0 +1,461 @@
+import { db } from '../lib/db';
+import { decrypt } from '../lib/crypto';
+
+const BASE_URL = 'https://us.edstem.org/api';
+const THRESHOLD_MINUTES = 15;
+const LINKED_ASSIGNMENT_REGEX =
+  /(?:hw|homework|project|proj|lab)\s*[\w:-]+|midterm\s*\d*|final(?:\s+exam)?/gi;
+
+interface EdThreadData {
+  id: number;
+  title: string;
+  category: string;
+  type: string;
+  is_announcement: boolean;
+  is_pinned: boolean;
+  created_at: string;
+  updated_at: string;
+  document: string;
+  vote_count: number;
+  is_answered: boolean;
+  answer_count?: number;
+  url?: string;
+  user?: { role?: string; course_role?: string };
+  answers?: Array<{
+    user_role?: string;
+    role?: string;
+    user?: { role?: string; course_role?: string };
+  }>;
+}
+
+interface EdThreadsResponse {
+  threads: EdThreadData[];
+}
+
+function classifyThread(
+  thread: EdThreadData
+): 'announcement' | 'question' | 'ignore' {
+  if (thread.type === 'announcement') return 'announcement';
+  if (thread.is_announcement) return 'announcement';
+  if (thread.is_pinned) {
+    const role =
+      thread.user?.role ?? thread.user?.course_role ?? '';
+    if (['admin', 'staff', 'instructor', 'ta'].includes(role)) {
+      return 'announcement';
+    }
+  }
+
+  const answerCount =
+    thread.answer_count ?? thread.answers?.length ?? 0;
+  if (answerCount > 3) return 'question';
+  if (thread.vote_count > 5) return 'question';
+  if (thread.is_answered && thread.vote_count > 2) return 'question';
+
+  return 'ignore';
+}
+
+function extractContentPreview(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
+function extractLinkedAssignment(
+  title: string,
+  content: string
+): string | null {
+  const combined = `${title} ${content}`;
+  const regex = new RegExp(LINKED_ASSIGNMENT_REGEX.source, 'gi');
+  const match = combined.match(regex);
+  return match ? match[0].trim() : null;
+}
+
+async function fetchEdThreads(
+  courseId: number,
+  token: string
+): Promise<EdThreadData[]> {
+  const allThreads: EdThreadData[] = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (true) {
+    const url =
+      `${BASE_URL}/courses/${courseId}/threads` +
+      `?limit=${limit}&offset=${offset}&sort=new`;
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (response.status === 401) {
+      throw new Error(
+        'Invalid Ed token — regenerate at edstem.org/us/settings/api-tokens'
+      );
+    }
+    if (response.status === 403) {
+      throw new Error(
+        `Access denied for Ed course ${courseId} — check enrollment`
+      );
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Ed API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data = (await response.json()) as EdThreadsResponse;
+    const batch = data.threads ?? [];
+    allThreads.push(...batch);
+
+    if (batch.length < limit) break;
+    offset += limit;
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  return allThreads;
+}
+
+export async function runEdSync(userId: string): Promise<void> {
+  console.log(`[ed] Starting sync for user ${userId}`);
+
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user) throw new Error(`User ${userId} not found`);
+
+  const syncToken = await db.syncToken.findUnique({
+    where: { userId_service: { userId, service: 'ed' } },
+  });
+  if (!syncToken) {
+    console.warn('[ed] No Ed token found, skipping');
+    return;
+  }
+
+  let token: string;
+  try {
+    token = decrypt(syncToken.accessToken);
+  } catch (e) {
+    console.error('[ed] Failed to decrypt token:', e);
+    return;
+  }
+
+  // Freshness check via SyncMetadata
+  const meta = await db.syncMetadata.findUnique({
+    where: { userId_source: { userId, source: 'ed' } },
+  });
+
+  if (meta?.lastSynced) {
+    const minutesSince =
+      (Date.now() - meta.lastSynced.getTime()) / 60000;
+    if (minutesSince < THRESHOLD_MINUTES) {
+      console.log(
+        `[ed] Skipping — synced ${minutesSince.toFixed(0)}min ago`
+      );
+      return;
+    }
+  }
+
+  // Create sync log entry
+  const syncLog = await db.syncLog.create({
+    data: {
+      userId,
+      service: 'ed',
+      status: 'running',
+      startedAt: new Date(),
+    },
+  });
+
+  let recordsFetched = 0;
+  let recordsCreated = 0;
+  let recordsUpdated = 0;
+  const failedCourses: string[] = [];
+
+  try {
+    // Get enrolled courses with Ed configured
+    const enrollments = await db.enrollment.findMany({
+      where: { userId },
+      include: {
+        course: {
+          select: {
+            id: true,
+            courseCode: true,
+            courseName: true,
+            edCourseId: true,
+          },
+        },
+      },
+    });
+
+    const edCourses = enrollments
+      .map((e) => e.course)
+      .filter((c) => c.edCourseId !== null);
+
+    console.log(
+      `[ed] Found ${edCourses.length} courses with Ed configured`
+    );
+
+    if (edCourses.length === 0) {
+      console.warn('[ed] No courses have edCourseId set');
+    }
+
+    for (const course of edCourses) {
+      const edCourseId = course.edCourseId!;
+      const edCourseIdNum = parseInt(edCourseId);
+      console.log(
+        `[ed] Fetching threads for ${course.courseCode} (Ed course ${edCourseId})`
+      );
+
+      try {
+        const threads = await fetchEdThreads(edCourseIdNum, token);
+        console.log(
+          `[ed] ${course.courseCode}: ${threads.length} threads fetched`
+        );
+        recordsFetched += threads.length;
+
+        for (const thread of threads) {
+          const edThreadId = `ed_${edCourseId}_${thread.id}`;
+          const threadUrl =
+            `https://edstem.org/us/courses/${edCourseId}` +
+            `/discussion/${thread.id}`;
+          const contentPreview = extractContentPreview(
+            thread.document ?? ''
+          );
+          const linkedAssignment = extractLinkedAssignment(
+            thread.title,
+            contentPreview
+          );
+          const threadType = classifyThread(thread);
+          const answerCount =
+            thread.answer_count ?? thread.answers?.length ?? 0;
+
+          // Write to RawEdThread (all threads)
+          await db.rawEdThread.upsert({
+            where: {
+              userId_edThreadId: { userId, edThreadId },
+            },
+            update: {
+              title: thread.title,
+              category: thread.category ?? null,
+              isAnnouncement: thread.is_announcement,
+              isPinned: thread.is_pinned,
+              contentPreview,
+              linkedAssignment,
+              answerCount,
+              voteCount: thread.vote_count,
+              isAnswered: thread.is_answered,
+              url: threadUrl,
+              syncedAt: new Date(),
+              rawJson: thread as any,
+            },
+            create: {
+              userId,
+              edThreadId,
+              edCourseId,
+              courseName: course.courseName,
+              title: thread.title,
+              category: thread.category ?? null,
+              isAnnouncement: thread.is_announcement,
+              isPinned: thread.is_pinned,
+              contentPreview,
+              linkedAssignment,
+              answerCount,
+              voteCount: thread.vote_count,
+              isAnswered: thread.is_answered,
+              url: threadUrl,
+              threadCreatedAt: new Date(thread.created_at),
+              rawJson: thread as any,
+              syncedAt: new Date(),
+            },
+          });
+
+          // Write to unified EdThread if announcement or question
+          if (threadType !== 'ignore') {
+            const existing = await db.edThread.findUnique({
+              where: { edThreadId },
+            });
+
+            if (existing) {
+              await db.edThread.update({
+                where: { edThreadId },
+                data: {
+                  title: thread.title,
+                  category: thread.category ?? null,
+                  contentPreview,
+                  threadType,
+                  isAnnouncement: thread.is_announcement,
+                  isPinned: thread.is_pinned,
+                  linkedAssignment,
+                  answerCount,
+                  voteCount: thread.vote_count,
+                  isAnswered: thread.is_answered,
+                  url: threadUrl,
+                },
+              });
+              recordsUpdated++;
+            } else {
+              await db.edThread.create({
+                data: {
+                  edThreadId,
+                  courseId: course.id,
+                  title: thread.title,
+                  category: thread.category ?? null,
+                  contentPreview,
+                  threadType,
+                  isAnnouncement: thread.is_announcement,
+                  isPinned: thread.is_pinned,
+                  linkedAssignment,
+                  answerCount,
+                  voteCount: thread.vote_count,
+                  isAnswered: thread.is_answered,
+                  url: threadUrl,
+                  postedAt: new Date(thread.created_at),
+                },
+              });
+              recordsCreated++;
+            }
+          }
+        }
+
+        // Flag threads that likely contain exam stats for manual entry
+        await flagExamStatThreads(course.id, threads).catch((e: any) =>
+          console.error(`[ed] Exam stat flagging failed for ${course.courseCode}:`, e.message)
+        );
+
+        console.log(
+          `[ed] ${course.courseCode}: done. ` +
+            `${recordsCreated} created, ${recordsUpdated} updated`
+        );
+      } catch (courseError: any) {
+        console.error(
+          `[ed] Failed to sync ${course.courseCode}:`,
+          courseError.message
+        );
+        failedCourses.push(course.courseCode ?? '');
+      }
+    }
+
+    // Update sync log
+    await db.syncLog.update({
+      where: { id: syncLog.id },
+      data: {
+        status: failedCourses.length > 0 ? 'partial' : 'success',
+        completedAt: new Date(),
+        recordsFetched,
+        recordsCreated,
+        recordsUpdated,
+        errorMessage:
+          failedCourses.length > 0
+            ? `Failed courses: ${failedCourses.join(', ')}`
+            : null,
+      },
+    });
+
+    // Update sync metadata
+    await db.syncMetadata.upsert({
+      where: { userId_source: { userId, source: 'ed' } },
+      update: {
+        lastSynced: new Date(),
+        needsUnification: true,
+      },
+      create: {
+        userId,
+        source: 'ed',
+        lastSynced: new Date(),
+        needsUnification: true,
+      },
+    });
+
+    console.log(
+      `[ed] Sync complete. Fetched: ${recordsFetched}, ` +
+        `Created: ${recordsCreated}, Updated: ${recordsUpdated}`
+    );
+  } catch (error: any) {
+    console.error('[ed] Sync failed:', error.message);
+    await db.syncLog.update({
+      where: { id: syncLog.id },
+      data: {
+        status: 'failed',
+        completedAt: new Date(),
+        errorMessage: error.message,
+      },
+    });
+    throw error;
+  }
+}
+
+// Detects threads that likely contain exam statistics and returns
+// the exam name + thread URL so the web app can prompt manual entry
+async function flagExamStatThreads(
+  courseId: string,
+  threads: EdThreadData[],
+): Promise<void> {
+  const examAssignments = await db.assignment.findMany({
+    where: { courseId, assignmentType: 'exam' },
+    include: { examStats: true },
+  });
+  if (examAssignments.length === 0) return;
+
+  for (const thread of threads) {
+    const title = (thread.title ?? '').toLowerCase();
+    const contentPreview = extractContentPreview(
+      thread.document ?? '',
+    ).toLowerCase();
+    const combined = `${title} ${contentPreview}`;
+
+    // Must mention exam AND score/grade release
+    const isExamThread =
+      /midterm|final|exam|quiz|mt\s*[12]/.test(combined);
+    const isStatRelease =
+      /scores released|scores are (up|out|available)|graded|grade release|distribution|statistics|stats/
+        .test(combined);
+
+    if (!isExamThread || !isStatRelease) continue;
+
+    // Match to assignment
+    const matched = examAssignments.find((a) => {
+      const name = a.name.toLowerCase();
+      return (
+        ((title.includes('midterm 1') || title.includes('mt1') || title.includes('mt 1')) &&
+          (name.includes('midterm 1') || name.includes('mt1'))) ||
+        ((title.includes('midterm 2') || title.includes('mt2') || title.includes('mt 2')) &&
+          (name.includes('midterm 2') || name.includes('mt2'))) ||
+        (title.includes('final') && name.includes('final')) ||
+        (title.includes('quiz') && name.includes('quiz'))
+      );
+    });
+
+    if (!matched) continue;
+
+    // Only flag if no stats exist yet for this assignment
+    if (matched.examStats && matched.examStats.length > 0) continue;
+
+    // Store the Ed thread ID on the assignment so the web app
+    // can show "Stats posted on Ed — click to enter"
+    const edThreadId = thread.id?.toString() ?? '';
+    if (!edThreadId) continue;
+
+    const existingIds = matched.edThreadIds ?? [];
+    if (existingIds.includes(edThreadId)) continue;
+
+    await db.assignment.update({
+      where: { id: matched.id },
+      data: {
+        edThreadIds: {
+          push: edThreadId,
+        },
+      },
+    }).catch(() => {}); // ignore if edThreadIds doesn't support push
+
+    console.log(`[ed] Flagged exam stat thread for ${matched.name}: "${thread.title}"`);
+  }
+}
