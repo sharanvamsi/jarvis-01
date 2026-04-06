@@ -5,6 +5,7 @@
 import { createHash } from 'crypto';
 import { db } from '../lib/db';
 import type { Prisma } from '../generated/prisma';
+import { filterByUserSelection } from '../lib/enrollment-filter';
 
 const THRESHOLD_HOURS = 24;
 const LLM_MODEL = 'claude-haiku-4-5-20251001';
@@ -361,8 +362,8 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
     return;
   }
 
-  // Get enrolled courses with website URLs
-  const enrollments = await db.enrollment.findMany({
+  // Get enrolled courses with website URLs (respect user selection)
+  const allEnrollments = await db.enrollment.findMany({
     where: { userId },
     include: {
       course: {
@@ -375,6 +376,7 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
     },
   });
 
+  const enrollments = filterByUserSelection(allEnrollments);
   const coursesToSync = enrollments
     .map((e: typeof enrollments[number]) => e.course)
     .filter((c: { id: string; courseCode: string | null; websiteUrl: string | null }) => {

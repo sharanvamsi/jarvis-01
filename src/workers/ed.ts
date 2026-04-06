@@ -1,5 +1,6 @@
 import { db } from '../lib/db';
 import { decrypt } from '../lib/crypto';
+import { filterByUserSelection } from '../lib/enrollment-filter';
 
 const BASE_URL = 'https://us.edstem.org/api';
 const THRESHOLD_MINUTES = 15;
@@ -196,9 +197,10 @@ export async function runEdSync(userId: string): Promise<void> {
       },
     });
 
-    const edCourses = enrollments
-      .map((e: typeof enrollments[number]) => e.course)
-      .filter((c: { id: string; courseCode: string | null; courseName: string | null; edCourseId: string | null }) => c.edCourseId !== null);
+    const filteredEnrollments = filterByUserSelection(enrollments);
+    const edCourses = filteredEnrollments
+      .map((e) => e.course)
+      .filter((c) => c.edCourseId !== null);
 
     console.log(
       `[ed] Found ${edCourses.length} courses with Ed configured`

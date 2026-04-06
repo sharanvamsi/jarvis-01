@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { db } from '../lib/db';
 import { decrypt } from '../lib/crypto';
 import { isCurrentCourse, assignmentNamesMatch } from '../lib/normalize';
+import { filterByUserSelection } from '../lib/enrollment-filter';
 
 const GRADESCOPE_SERVICE_URL =
   process.env.GRADESCOPE_SERVICE_URL ?? 'http://localhost:8001';
@@ -158,8 +159,8 @@ export async function runGradescopeSync(userId: string): Promise<void> {
     const courses: GradescopeCourse[] = coursesData.courses ?? [];
     console.log(`[gradescope] Found ${courses.length} courses`);
 
-    // Get enrolled DB courses for matching
-    const enrollments = await db.enrollment.findMany({
+    // Get enrolled DB courses for matching (respect user selection)
+    const allEnrollments = await db.enrollment.findMany({
       where: { userId },
       include: {
         course: {
@@ -167,6 +168,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
         },
       },
     });
+    const enrollments = filterByUserSelection(allEnrollments);
 
     const currentSemester = user.currentSemester ?? 'SP26';
 

@@ -294,8 +294,26 @@ export async function runCanvasSync(userId: string): Promise<void> {
       });
     }
 
-    // Step 6: Fetch assignments only for current courses
-    await Promise.allSettled(currentCourseIds.map(async (courseId) => {
+    // Check if user has explicit course selections
+    const userSelections = await db.enrollment.findMany({
+      where: { userId, userSelected: true },
+      include: { course: { select: { canvasId: true } } },
+    });
+
+    let courseIdsToSync: string[];
+    if (userSelections.length > 0) {
+      const selectedCanvasIds = new Set(
+        userSelections.map(e => e.course.canvasId).filter((id): id is string => !!id)
+      );
+      courseIdsToSync = currentCourseIds.filter(id => selectedCanvasIds.has(id));
+      console.log(`[canvas] Syncing ${courseIdsToSync.length} user-selected courses`);
+    } else {
+      courseIdsToSync = currentCourseIds;
+      console.log(`[canvas] No selections found, syncing ${courseIdsToSync.length} auto-detected courses`);
+    }
+
+    // Step 6: Fetch assignments only for selected/current courses
+    await Promise.allSettled(courseIdsToSync.map(async (courseId) => {
       try {
         // Fetch assignments, submissions, announcements in parallel
         const [assignmentsData, submissionsData, announcementsData] = await Promise.all([

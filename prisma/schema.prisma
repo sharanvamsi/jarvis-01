@@ -1,7 +1,8 @@
 generator client {
-  provider      = "prisma-client-js"
-  output        = "../src/generated/prisma"
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider        = "prisma-client-js"
+  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
+  output          = "../src/generated/prisma"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -119,11 +120,12 @@ model Course {
 }
 
 model Enrollment {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  courseId  String   @map("course_id")
-  role      String   @default("student")
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  courseId     String   @map("course_id")
+  role         String   @default("student")
+  userSelected Boolean? @map("user_selected")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
