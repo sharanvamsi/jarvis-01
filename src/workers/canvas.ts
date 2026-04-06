@@ -247,7 +247,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
       ? courses.filter(c => c.name).map(c => String(c.id))
       : currentCourseIds;
 
-    for (const courseId of courseIdsToSync) {
+    await Promise.allSettled(courseIdsToSync.map(async (courseId) => {
       try {
         // Fetch assignments, submissions, announcements in parallel
         const [assignmentsData, submissionsData, announcementsData] = await Promise.all([
@@ -280,13 +280,16 @@ export async function runCanvasSync(userId: string): Promise<void> {
           where: { courseCode_term: { courseCode: normalizedCode, term } },
         });
 
+        // Batch all DB writes into a single transaction
+        const txOps: any[] = [];
+
         for (const assignment of assignmentsData) {
           const canvasAssignmentId = String(assignment.id);
           const dueDate = assignment.due_at ? new Date(assignment.due_at) : null;
           const submission = submissionMap.get(assignment.id) || null;
 
           // Upsert RawCanvasAssignment
-          await db.rawCanvasAssignment.upsert({
+          txOps.push(db.rawCanvasAssignment.upsert({
             where: { userId_canvasAssignmentId: { userId, canvasAssignmentId } },
             create: {
               userId,
@@ -308,11 +311,11 @@ export async function runCanvasSync(userId: string): Promise<void> {
               rawJson: assignment as any,
               syncedAt: new Date(),
             },
-          });
+          }));
 
           // Upsert RawCanvasSubmission if exists
           if (submission) {
-            await db.rawCanvasSubmission.upsert({
+            txOps.push(db.rawCanvasSubmission.upsert({
               where: { userId_canvasAssignmentId: { userId, canvasAssignmentId } },
               create: {
                 userId,
@@ -331,13 +334,13 @@ export async function runCanvasSync(userId: string): Promise<void> {
                 rawJson: submission as any,
                 syncedAt: new Date(),
               },
-            });
+            }));
           }
 
           // Upsert unified Assignment + UserAssignment if we have a course record
           if (courseRecord) {
             const assignmentId = `canvas_${assignment.id}`;
-            await db.assignment.upsert({
+            txOps.push(db.assignment.upsert({
               where: { id: assignmentId },
               create: {
                 id: assignmentId,
@@ -357,10 +360,10 @@ export async function runCanvasSync(userId: string): Promise<void> {
                 pointsPossible: assignment.points_possible,
                 htmlUrl: assignment.html_url,
               },
-            });
+            }));
 
             const status = deriveStatus(submission, dueDate);
-            await db.userAssignment.upsert({
+            txOps.push(db.userAssignment.upsert({
               where: { userId_assignmentId: { userId, assignmentId } },
               create: {
                 userId,
@@ -376,7 +379,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
                 status,
                 submittedAt: submission?.submitted_at ? new Date(submission.submitted_at) : null,
               },
-            });
+            }));
             recordsUpdated++;
           }
         }
@@ -385,7 +388,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
         for (const ann of announcementsData) {
           const canvasAnnouncementId = String(ann.id);
 
-          await db.rawCanvasAnnouncement.upsert({
+          txOps.push(db.rawCanvasAnnouncement.upsert({
             where: { userId_canvasAnnouncementId: { userId, canvasAnnouncementId } },
             create: {
               userId,
@@ -404,10 +407,10 @@ export async function runCanvasSync(userId: string): Promise<void> {
               rawJson: ann as any,
               syncedAt: new Date(),
             },
-          });
+          }));
 
           if (courseRecord) {
-            await db.canvasAnnouncement.upsert({
+            txOps.push(db.canvasAnnouncement.upsert({
               where: { canvasId: canvasAnnouncementId },
               create: {
                 courseId: courseRecord.id,
@@ -422,13 +425,18 @@ export async function runCanvasSync(userId: string): Promise<void> {
                 message: ann.message,
                 postedAt: ann.posted_at ? new Date(ann.posted_at) : null,
               },
-            });
+            }));
           }
+        }
+
+        // Execute all writes in a single transaction
+        if (txOps.length > 0) {
+          await db.$transaction(txOps);
         }
       } catch (err) {
         console.error(`[canvas] Failed to sync course ${courseId}:`, err);
       }
-    }
+    }));
 
     // Step 7: Update sync metadata
     await db.syncMetadata.upsert({
