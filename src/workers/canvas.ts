@@ -302,11 +302,18 @@ export async function runCanvasSync(userId: string): Promise<void> {
 
     let courseIdsToSync: string[];
     if (userSelections.length > 0) {
-      const selectedCanvasIds = new Set(
-        userSelections.map(e => e.course.canvasId).filter((id): id is string => !!id)
-      );
-      courseIdsToSync = currentCourseIds.filter(id => selectedCanvasIds.has(id));
-      console.log(`[canvas] Syncing ${courseIdsToSync.length} user-selected courses`);
+      // Sync ALL user-selected courses, even if they're not in the current semester
+      const selectedCanvasIds = userSelections
+        .map(e => e.course.canvasId)
+        .filter((id): id is string => !!id);
+      // Merge: user-selected courses + any current courses not yet selected
+      const selectedSet = new Set(selectedCanvasIds);
+      courseIdsToSync = [...selectedCanvasIds];
+      // Also include current courses that aren't in the selection (e.g. brand new courses)
+      for (const id of currentCourseIds) {
+        if (!selectedSet.has(id)) courseIdsToSync.push(id);
+      }
+      console.log(`[canvas] Syncing ${courseIdsToSync.length} courses (${selectedCanvasIds.length} selected + ${courseIdsToSync.length - selectedCanvasIds.length} auto-detected)`);
     } else {
       courseIdsToSync = currentCourseIds;
       console.log(`[canvas] No selections found, syncing ${courseIdsToSync.length} auto-detected courses`);
