@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Check, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { Check, X, ChevronDown, ChevronUp, RefreshCw, Loader2 } from 'lucide-react';
 import StatusDot from './StatusDot';
 import SetupGuide from './SetupGuide';
 import { type ConnectionStatus, type SaveStatus, formatLastSync } from './types';
@@ -13,21 +14,57 @@ const SETUP_STEPS = [
 ];
 
 export default function EdCard() {
+  const router = useRouter();
   const [status, setStatus] = useState<ConnectionStatus>({ connected: false, lastSync: null });
+  const [canvasConnected, setCanvasConnected] = useState(true); // assume true until checked
   const [token, setToken] = useState('');
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [showUpdate, setShowUpdate] = useState(false);
   const [showDisconnect, setShowDisconnect] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchStatus = useCallback(() => {
     fetch('/api/tokens/ed/status')
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch status')))
       .then((data: ConnectionStatus) => { setStatus(data); setLoading(false); })
       .catch(() => setLoading(false));
+    // Also check Canvas status for the warning
+    fetch('/api/tokens/canvas/status')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data) setCanvasConnected(data.connected); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  function startSyncPolling() {
+    setSyncState('syncing');
+    let attempts = 0;
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch('/api/sync/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const edStatus = data.services?.ed?.status;
+        if (edStatus === 'success' || edStatus === 'partial' || attempts >= 30) {
+          clearInterval(pollRef.current!);
+          setSyncState('done');
+          fetchStatus();
+          // Re-fetch status after a delay to catch late syncLog writes
+          setTimeout(fetchStatus, 5000);
+          router.refresh();
+        }
+      } catch {}
+    }, 3000);
+  }
 
   async function handleSave() {
     if (!token.trim()) return;
@@ -38,7 +75,7 @@ export default function EdCard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: token.trim() }),
       });
-      if (res.ok) { setSaveStatus('saved'); setToken(''); setShowUpdate(false); fetchStatus(); }
+      if (res.ok) { setSaveStatus('saved'); setToken(''); setShowUpdate(false); fetchStatus(); startSyncPolling(); }
       else setSaveStatus('error');
     } catch { setSaveStatus('error'); }
   }
@@ -66,12 +103,15 @@ export default function EdCard() {
   }
 
   return (
-    <div className="bg-[#111111] border border-[#1F1F1F] rounded-md p-5 mb-4">
+    <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-5 mb-4${!canvasConnected && !status.connected ? ' opacity-60' : ''}`}>
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <StatusDot connected={status.connected} />
           <span className="text-[#F5F5F5] text-sm font-medium">Ed Discussion</span>
           {status.connected && <span className="text-emerald-400 text-xs">Connected</span>}
+          {!canvasConnected && !status.connected && (
+            <span className="text-[10px] text-[#525252] bg-[#1F1F1F] rounded px-1.5 py-0.5">Requires Canvas</span>
+          )}
         </div>
         {status.connected && (
           <span className="text-[#525252] text-xs">{formatLastSync(status.lastSync)}</span>
@@ -79,7 +119,21 @@ export default function EdCard() {
       </div>
       <p className="text-[#525252] text-xs mb-4">Announcements and questions from Ed</p>
 
-      {!status.connected && !showUpdate && (
+      {!status.connected && !showUpdate && !canvasConnected && (
+        <div>
+          <p className="text-xs text-[#525252]">
+            Connect Canvas first to enable Ed integration. Ed needs your course list to sync announcements and threads.
+          </p>
+          <a
+            href="#canvas-card"
+            className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            Connect Canvas first
+          </a>
+        </div>
+      )}
+
+      {!status.connected && !showUpdate && canvasConnected && (
         <div>
           {/* Step-by-step instructions */}
           <div className="mb-3 space-y-1.5">
@@ -127,13 +181,29 @@ export default function EdCard() {
 
       {status.connected && (
         <div className="space-y-3">
-          <button
-            onClick={() => setShowUpdate(!showUpdate)}
-            className="bg-[#1F1F1F] hover:bg-[#2a2a2a] text-[#A3A3A3] text-sm px-4 py-2 rounded transition-colors flex items-center gap-1"
-          >
-            Update Token
-            {showUpdate ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { fetch('/api/sync/trigger', { method: 'POST' }).catch(() => {}); startSyncPolling(); }}
+              disabled={syncState === 'syncing'}
+              className="bg-[#1F1F1F] hover:bg-[#2a2a2a] text-[#A3A3A3] text-sm px-4 py-2 rounded transition-colors flex items-center gap-2"
+            >
+              {syncState === 'syncing' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {syncState === 'syncing' ? 'Syncing...' : 'Sync Now'}
+            </button>
+            <button
+              onClick={() => setShowUpdate(!showUpdate)}
+              className="bg-[#1F1F1F] hover:bg-[#2a2a2a] text-[#A3A3A3] text-sm px-4 py-2 rounded transition-colors flex items-center gap-1"
+            >
+              Update Token
+              {showUpdate ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+          {syncState === 'done' && (
+            <div className="flex items-center gap-2 text-xs text-emerald-500">
+              <Check className="w-3 h-3" />
+              <span>Sync complete</span>
+            </div>
+          )}
 
           {showUpdate && (
             <div className="pt-2">

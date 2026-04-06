@@ -27,6 +27,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Token required" }, { status: 400 })
   }
 
+  // Canvas must be connected before Ed
+  const canvasToken = await db.syncToken.findFirst({
+    where: { userId: session.user.id, service: 'canvas' },
+    select: { id: true },
+  })
+  if (!canvasToken) {
+    return NextResponse.json(
+      { error: 'Canvas must be connected before adding Ed integration' },
+      { status: 400 }
+    )
+  }
+
   const encrypted = encrypt(token.trim())
 
   await db.syncToken.upsert({
@@ -43,6 +55,20 @@ export async function POST(req: NextRequest) {
       accessToken: encrypted,
     },
   })
+
+  // Fire-and-forget sync trigger so Ed data appears immediately
+  const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
+  if (pipelineUrl) {
+    fetch(`${pipelineUrl}/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
+      },
+      body: JSON.stringify({ userId: session.user.id }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {})
+  }
 
   return NextResponse.json({ success: true })
 }

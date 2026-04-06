@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Check, X, ChevronDown, ChevronUp, RefreshCw, Loader2 } from 'lucide-react';
 import StatusDot from './StatusDot';
 import { type SaveStatus, formatLastSync } from './types';
@@ -16,6 +17,7 @@ type CanvasStatus = {
 };
 
 export default function CanvasCard() {
+  const router = useRouter();
   const [status, setStatus] = useState<CanvasStatus>({
     connected: false, lastSync: null, userExpiresAt: null,
     expiresInDays: null, syncStatus: null, syncError: null, recordsFetched: 0,
@@ -28,7 +30,9 @@ export default function CanvasCard() {
   const [loading, setLoading] = useState(true);
   const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [elapsedSyncSeconds, setElapsedSyncSeconds] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchStatus = useCallback(() => {
     fetch('/api/tokens/canvas/status')
@@ -41,20 +45,24 @@ export default function CanvasCard() {
 
   // Clean up polling on unmount
   useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (elapsedRef.current) clearInterval(elapsedRef.current);
+    };
   }, []);
 
   async function startSyncPolling() {
     setSyncState('syncing');
     setSyncError(null);
+    setElapsedSyncSeconds(0);
+    if (elapsedRef.current) clearInterval(elapsedRef.current);
+    elapsedRef.current = setInterval(() => setElapsedSyncSeconds(s => s + 1), 1000);
 
     try {
       const triggerRes = await fetch('/api/sync/trigger', { method: 'POST' });
       if (triggerRes.status === 429) {
-        const body = await triggerRes.json().catch(() => ({}));
-        setSyncState('error');
-        setSyncError(body.message ?? 'Please wait before syncing again');
-        return;
+        // A sync is already running — our data will be included
+        // Continue polling to detect when it finishes
       }
     } catch {
       // Pipeline unreachable — continue polling anyway
@@ -74,16 +82,21 @@ export default function CanvasCard() {
 
         if (canvasStatus === 'success' || canvasStatus === 'partial') {
           clearInterval(pollRef.current!);
+          if (elapsedRef.current) clearInterval(elapsedRef.current);
           setSyncState('done');
           fetchStatus();
+          router.refresh();
         } else if (canvasStatus === 'failed') {
           clearInterval(pollRef.current!);
+          if (elapsedRef.current) clearInterval(elapsedRef.current);
           setSyncState('error');
           setSyncError(canvasError ?? 'Sync failed — check your token');
         } else if (attempts >= maxAttempts) {
           clearInterval(pollRef.current!);
+          if (elapsedRef.current) clearInterval(elapsedRef.current);
           setSyncState('done'); // may still be running in background
           fetchStatus();
+          router.refresh();
         }
       } catch {
         // Network error — keep polling
@@ -194,18 +207,21 @@ export default function CanvasCard() {
     </div>
   );
 
+  const getSyncMessage = (s: number) =>
+    s < 10 ? 'Connecting to Canvas...' : s < 25 ? 'Fetching your courses and assignments...' : s < 45 ? 'Syncing grades and announcements...' : 'Almost done — finalizing your data...';
+
   const syncFeedback = (
     <>
       {syncState === 'syncing' && (
         <div className="flex items-center gap-2 mt-3 text-xs text-[#A3A3A3]">
           <div className="w-3 h-3 rounded-full border border-blue-500 border-t-transparent animate-spin shrink-0" />
-          <span>Syncing your Canvas data...</span>
+          <span>{getSyncMessage(elapsedSyncSeconds)}</span>
         </div>
       )}
       {syncState === 'done' && (
         <div className="flex items-center gap-2 mt-3 text-xs text-emerald-500">
           <Check className="w-3 h-3" />
-          <span>Sync complete — refresh the page to see your data</span>
+          <span>Sync complete — your data is now up to date</span>
         </div>
       )}
       {syncState === 'error' && (
@@ -226,7 +242,7 @@ export default function CanvasCard() {
   );
 
   return (
-    <div className={`bg-[#111111] border rounded-md p-5 mb-4 ${
+    <div id="canvas-card" className={`bg-[#111111] border rounded-md p-5 mb-4 ${
       !status.connected ? 'border-blue-500/30 border-l-2 border-l-blue-500' : 'border-[#1F1F1F]'
     }`}>
       <div className="flex items-center justify-between mb-1">

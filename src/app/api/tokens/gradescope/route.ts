@@ -30,6 +30,18 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Canvas must be connected before Gradescope
+  const canvasToken = await db.syncToken.findFirst({
+    where: { userId: session.user.id, service: 'canvas' },
+    select: { id: true },
+  })
+  if (!canvasToken) {
+    return NextResponse.json(
+      { error: 'Canvas must be connected before adding Gradescope integration' },
+      { status: 400 }
+    )
+  }
+
   const credentials = JSON.stringify({
     email: email.trim(),
     password: password.trim(),
@@ -50,6 +62,20 @@ export async function POST(req: NextRequest) {
       accessToken: encrypted,
     },
   })
+
+  // Fire-and-forget sync trigger so Gradescope data appears immediately
+  const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
+  if (pipelineUrl) {
+    fetch(`${pipelineUrl}/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
+      },
+      body: JSON.stringify({ userId: session.user.id }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {})
+  }
 
   return NextResponse.json({ success: true })
 }
