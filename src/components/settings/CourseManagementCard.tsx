@@ -1,62 +1,86 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Check, Loader2, RefreshCw } from 'lucide-react';
-import CourseSelectionList, { type CourseCandidate } from './CourseSelectionList';
+import { useRouter } from 'next/navigation';
+import { Check, Loader2, Plus, X } from 'lucide-react';
+
+interface CourseEntry {
+  canvasId: string;
+  courseCode: string;
+  courseName: string;
+  term: string;
+  selected: boolean | null;
+}
 
 export default function CourseManagementCard() {
-  const [courses, setCourses] = useState<CourseCandidate[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const router = useRouter();
+  const [allCourses, setAllCourses] = useState<CourseEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [canvasConnected, setCanvasConnected] = useState(false);
+  const [showAddCourse, setShowAddCourse] = useState(false);
+  const [justAdded, setJustAdded] = useState<string | null>(null);
+  const [justRemoved, setJustRemoved] = useState<string | null>(null);
 
-  const fetchCandidates = useCallback(async () => {
+  const fetchCourses = useCallback(async () => {
     setLoading(true);
     try {
-      // Check Canvas status
       const statusRes = await fetch('/api/tokens/canvas/status');
       const statusData = await statusRes.json();
       setCanvasConnected(statusData.connected);
       if (!statusData.connected) { setLoading(false); return; }
 
-      // Fetch course candidates
       const res = await fetch('/api/courses/candidates');
       if (!res.ok) { setLoading(false); return; }
       const data = await res.json();
-      const candidates: CourseCandidate[] = data.courses ?? [];
-      setCourses(candidates);
-      setSelectedIds(
-        candidates.filter(c => c.selected === true).map(c => c.canvasId)
-      );
-    } catch {
-      // ignore
-    } finally {
+      setAllCourses(data.courses ?? []);
+    } catch { /* ignore */ } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { fetchCandidates(); }, [fetchCandidates]);
+  useEffect(() => { fetchCourses(); }, [fetchCourses]);
 
-  async function handleSave() {
+  const selectedCourses = allCourses.filter(c => c.selected === true);
+  const availableCourses = allCourses.filter(c => c.selected !== true);
+
+  async function saveSelections(newSelectedIds: string[]) {
     setSaving(true);
-    setSaved(false);
     try {
       const res = await fetch('/api/courses/selections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedCanvasIds: selectedIds }),
+        body: JSON.stringify({ selectedCanvasIds: newSelectedIds }),
       });
       if (res.ok) {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 3000);
+        // Update local state immediately
+        setAllCourses(prev => prev.map(c => ({
+          ...c,
+          selected: newSelectedIds.includes(c.canvasId) ? true : false,
+        })));
+        router.refresh();
       }
-    } catch {
-      // ignore
-    } finally {
+    } catch { /* ignore */ } finally {
       setSaving(false);
     }
+  }
+
+  async function handleAddCourse(canvasId: string) {
+    const newIds = [...selectedCourses.map(c => c.canvasId), canvasId];
+    setJustAdded(canvasId);
+    await saveSelections(newIds);
+    setShowAddCourse(false);
+    setTimeout(() => setJustAdded(null), 2000);
+  }
+
+  async function handleRemoveCourse(canvasId: string) {
+    const newIds = selectedCourses
+      .map(c => c.canvasId)
+      .filter(id => id !== canvasId);
+    if (newIds.length === 0) return; // must keep at least 1
+    setJustRemoved(canvasId);
+    await saveSelections(newIds);
+    setTimeout(() => setJustRemoved(null), 2000);
   }
 
   if (loading) {
@@ -77,9 +101,7 @@ export default function CourseManagementCard() {
           <span className="text-[#F5F5F5] text-sm font-medium">Your Courses</span>
           <span className="text-[10px] text-[#525252] bg-[#1F1F1F] rounded px-1.5 py-0.5">Requires Canvas</span>
         </div>
-        <p className="text-xs text-[#525252]">
-          Connect Canvas first to manage your course selection.
-        </p>
+        <p className="text-xs text-[#525252]">Connect Canvas first to manage your course selection.</p>
       </div>
     );
   }
@@ -88,49 +110,91 @@ export default function CourseManagementCard() {
     <div className="bg-[#111111] border border-[#1F1F1F] rounded-md p-5 mb-4">
       <div className="flex items-center justify-between mb-1">
         <span className="text-[#F5F5F5] text-sm font-medium">Your Courses</span>
-        <button
-          onClick={() => { fetchCandidates(); }}
-          className="text-[#525252] hover:text-[#A3A3A3] transition-colors"
-          title="Refresh course list"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
+        {saving && <Loader2 className="w-3.5 h-3.5 text-[#525252] animate-spin" />}
       </div>
       <p className="text-[#525252] text-xs mb-4">
         Only selected courses are synced to your dashboard.
       </p>
 
-      {courses.length === 0 ? (
-        <p className="text-[#525252] text-sm">
-          No active courses found. Try syncing Canvas first.
-        </p>
+      {/* Selected courses */}
+      {selectedCourses.length === 0 && !showAddCourse ? (
+        <p className="text-[#525252] text-sm mb-3">No courses selected yet.</p>
       ) : (
-        <>
-          <CourseSelectionList
-            courses={courses}
-            selectedIds={selectedIds}
-            onChange={setSelectedIds}
-          />
-
-          <div className="flex items-center gap-3 mt-4">
-            <button
-              onClick={handleSave}
-              disabled={selectedIds.length === 0 || saving}
-              className="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-2 rounded disabled:bg-[#1F1F1F] disabled:text-[#525252] transition-colors flex items-center gap-2"
+        <div className="space-y-2 mb-3">
+          {selectedCourses.map(course => (
+            <div
+              key={course.canvasId}
+              className={`flex items-center justify-between p-3 rounded-md border transition-colors ${
+                justAdded === course.canvasId
+                  ? 'bg-emerald-500/10 border-emerald-500/30'
+                  : 'bg-[#0A0A0A] border-[#1F1F1F]'
+              }`}
             >
-              {saving ? (
-                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
-              ) : (
-                `Save (${selectedIds.length} course${selectedIds.length !== 1 ? 's' : ''})`
-              )}
+              <div className="flex items-center gap-2 min-w-0">
+                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="text-sm text-[#F5F5F5] font-medium">{course.courseCode}</span>
+                <span className="text-xs text-[#525252] truncate">{course.courseName}</span>
+              </div>
+              <button
+                onClick={() => handleRemoveCourse(course.canvasId)}
+                disabled={saving || selectedCourses.length <= 1}
+                className="text-[#525252] hover:text-red-400 disabled:opacity-30 transition-colors shrink-0 ml-2"
+                title="Remove course"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add course button / expanded list */}
+      {!showAddCourse ? (
+        <button
+          onClick={() => setShowAddCourse(true)}
+          disabled={availableCourses.length === 0}
+          className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 disabled:text-[#525252] transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          {availableCourses.length > 0
+            ? `Add course (${availableCourses.length} available)`
+            : 'No more courses available'}
+        </button>
+      ) : (
+        <div className="mt-2 border border-[#1F1F1F] rounded-md p-3 bg-[#0A0A0A]">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs text-[#A3A3A3] font-medium">Select a course to add</span>
+            <button
+              onClick={() => setShowAddCourse(false)}
+              className="text-[#525252] hover:text-[#A3A3A3] transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
             </button>
-            {saved && (
-              <span className="text-emerald-400 text-xs flex items-center gap-1">
-                <Check className="w-3 h-3" /> Saved &mdash; syncing now
-              </span>
-            )}
           </div>
-        </>
+          <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
+            {availableCourses.map(course => (
+              <button
+                key={course.canvasId}
+                onClick={() => handleAddCourse(course.canvasId)}
+                disabled={saving}
+                className="w-full text-left p-2.5 rounded border border-[#1F1F1F] hover:border-blue-500/30 hover:bg-[#111111] disabled:opacity-50 transition-colors"
+              >
+                <p className="text-sm text-[#F5F5F5] font-medium">{course.courseCode}</p>
+                <p className="text-xs text-[#525252] truncate">{course.courseName}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Feedback */}
+      {justAdded && (
+        <p className="text-emerald-400 text-xs mt-2 flex items-center gap-1">
+          <Check className="w-3 h-3" /> Course added — syncing data now
+        </p>
+      )}
+      {justRemoved && (
+        <p className="text-[#A3A3A3] text-xs mt-2">Course removed</p>
       )}
     </div>
   );
