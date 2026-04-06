@@ -14,6 +14,7 @@ import {
 } from '../lib/assignment-matcher';
 
 export async function syncUser(userId: string): Promise<void> {
+  const t = Date.now();
   console.log(`[syncUser] Starting sync for user ${userId}`);
 
   const user = await db.user.findUnique({ where: { id: userId } });
@@ -38,54 +39,14 @@ export async function syncUser(userId: string): Promise<void> {
     }
   }
 
-  // Gradescope and course website depend on course list
-  try {
-    await runGradescopeSync(userId);
-    console.log('[syncUser] Gradescope sync completed');
-  } catch (err) {
-    console.error('[syncUser] Gradescope sync failed:', err);
-  }
+  console.log(`[syncUser] Phase 1 complete in ${Date.now() - t}ms`);
 
-  try {
-    await runCourseWebsiteSync(userId);
-    console.log('[syncUser] Course website sync completed');
-  } catch (err) {
-    console.error('[syncUser] Course website sync failed:', err);
-  }
-
-  // Berkeleytime grade distributions
-  await syncBerkeleytime(userId).catch((e) =>
-    console.error("[BT] Sync failed:", e)
-  );
-
-  // Syllabus extraction
-  await syncSyllabus(userId).catch((e) =>
-    console.error('[syllabus] Sync failed:', e)
-  );
-
-  // Enrich assignments with website spec URLs
-  try {
-    await enrichAssignmentsWithWebsiteData(userId);
-    console.log('[syncUser] Assignment enrichment completed');
-  } catch (err) {
-    console.error('[syncUser] Assignment enrichment failed:', err);
-  }
-
-  // Assignment matching — runs LAST after all sources aggregated
-  try {
-    await runAssignmentMatching(userId);
-    console.log('[syncUser] Assignment matching completed');
-  } catch (err) {
-    console.error('[syncUser] Assignment matching failed:', err);
-  }
-
-  // Update last sync timestamp
+  // Update last sync and revalidate immediately so dashboard shows data
   await db.user.update({
     where: { id: userId },
     data: { lastSyncAt: new Date() },
   });
 
-  // Notify web app to revalidate cached pages for this user
   const webUrl = process.env.WEB_ORIGIN;
   if (webUrl) {
     fetch(`${webUrl}/api/revalidate`, {
@@ -99,7 +60,70 @@ export async function syncUser(userId: string): Promise<void> {
     }).catch(() => {});
   }
 
-  console.log(`[syncUser] Sync complete for user ${userId}`);
+  // ── Phase 2: Slow enrichment (background, non-blocking) ───
+  runPhase2(userId, t, webUrl).catch(err =>
+    console.error('[syncUser] Phase 2 error:', err)
+  );
+
+  console.log(`[syncUser] Returning after Phase 1 for user ${userId}`);
+}
+
+async function runPhase2(userId: string, startTime: number, webUrl: string | undefined): Promise<void> {
+  try {
+    await runGradescopeSync(userId);
+    console.log(`[syncUser] Gradescope sync completed (${Date.now() - startTime}ms)`);
+  } catch (err) {
+    console.error('[syncUser] Gradescope sync failed:', err);
+  }
+
+  try {
+    await runCourseWebsiteSync(userId);
+    console.log(`[syncUser] Course website sync completed (${Date.now() - startTime}ms)`);
+  } catch (err) {
+    console.error('[syncUser] Course website sync failed:', err);
+  }
+
+  await syncBerkeleytime(userId).catch((e) =>
+    console.error('[BT] Sync failed:', e)
+  );
+
+  await syncSyllabus(userId).catch((e) =>
+    console.error('[syllabus] Sync failed:', e)
+  );
+
+  try {
+    await enrichAssignmentsWithWebsiteData(userId);
+    console.log(`[syncUser] Assignment enrichment completed (${Date.now() - startTime}ms)`);
+  } catch (err) {
+    console.error('[syncUser] Assignment enrichment failed:', err);
+  }
+
+  try {
+    await runAssignmentMatching(userId);
+    console.log(`[syncUser] Assignment matching completed (${Date.now() - startTime}ms)`);
+  } catch (err) {
+    console.error('[syncUser] Assignment matching failed:', err);
+  }
+
+  // Update sync timestamp again and revalidate after phase 2
+  await db.user.update({
+    where: { id: userId },
+    data: { lastSyncAt: new Date() },
+  });
+
+  if (webUrl) {
+    fetch(`${webUrl}/api/revalidate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
+      },
+      body: JSON.stringify({ userId }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  }
+
+  console.log(`[syncUser] Phase 2 complete in ${Date.now() - startTime}ms`);
 }
 
 async function runAssignmentMatching(userId: string): Promise<void> {

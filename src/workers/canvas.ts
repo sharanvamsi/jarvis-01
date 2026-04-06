@@ -97,6 +97,7 @@ async function fetchPaginated<T>(url: string, token: string): Promise<T[]> {
 }
 
 export async function runCanvasSync(userId: string): Promise<void> {
+  const syncStart = Date.now();
   console.log(`[canvas] Starting sync for user ${userId}`);
 
   // Step 1: Load user and token
@@ -155,6 +156,8 @@ export async function runCanvasSync(userId: string): Promise<void> {
       courses = cached.map(c => c.rawJson as unknown as CanvasCourseData);
     }
 
+    console.log(`[canvas] Fetched ${courses.length} courses in ${Date.now() - syncStart}ms`);
+
     // Step 4: Write API snapshot
     await db.rawApiSnapshot.upsert({
       where: { userId_service: { userId, service: 'canvas' } },
@@ -165,9 +168,9 @@ export async function runCanvasSync(userId: string): Promise<void> {
     // Step 5: Process courses
     const currentCourseIds: string[] = [];
 
-    for (const course of courses) {
-      if (!course.name || !course.enrollments?.length) continue;
-      if (isNonAcademicCourse(course.name, course.course_code || '')) continue;
+    await Promise.allSettled(courses.map(async (course) => {
+      if (!course.name || !course.enrollments?.length) return;
+      if (isNonAcademicCourse(course.name, course.course_code || '')) return;
 
       const correctedState = correctEnrollmentState(
         course.enrollments[0]?.enrollment_state || null,
@@ -240,7 +243,9 @@ export async function runCanvasSync(userId: string): Promise<void> {
         if (isCurrent) currentCourseIds.push(canvasCourseId);
         recordsCreated++;
       }
-    }
+    }));
+
+    console.log(`[canvas] Processed ${currentCourseIds.length} current courses in ${Date.now() - syncStart}ms`);
 
     // Step 6: Fetch assignments for courses
     const courseIdsToSync = isFirstSync
@@ -438,6 +443,8 @@ export async function runCanvasSync(userId: string): Promise<void> {
       }
     }));
 
+    console.log(`[canvas] Fetched + wrote assignments in ${Date.now() - syncStart}ms`);
+
     // Step 7: Update sync metadata
     await db.syncMetadata.upsert({
       where: { userId_source: { userId, source: 'canvas' } },
@@ -457,7 +464,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
       },
     });
 
-    console.log(`[canvas] Sync complete: ${recordsFetched} fetched, ${recordsCreated} created, ${recordsUpdated} updated`);
+    console.log(`[canvas] Sync complete in ${Date.now() - syncStart}ms: ${recordsFetched} fetched, ${recordsCreated} created, ${recordsUpdated} updated`);
 
   } catch (err) {
     console.error('[canvas] Sync failed:', err);
