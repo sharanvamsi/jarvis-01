@@ -9,8 +9,20 @@ export async function GET() {
   }
 
   try {
+    const userId = session.user.id;
+
+    // Respect userSelected: if user has selections, show only those
+    const selectedCount = await db.enrollment.count({
+      where: { userId, userSelected: true },
+    });
+
     const enrollments = await db.enrollment.findMany({
-      where: { userId: session.user.id },
+      where: {
+        userId,
+        ...(selectedCount > 0
+          ? { userSelected: true }
+          : { course: { isCurrentSemester: true } }),
+      },
       include: {
         course: {
           select: {
@@ -33,7 +45,6 @@ export async function GET() {
 
     const courses = enrollments
       .map((e) => e.course)
-      .filter((c) => c.isCurrentSemester)
       .sort((a, b) => a.courseCode.localeCompare(b.courseCode))
       .map((c) => ({
         id: c.id,

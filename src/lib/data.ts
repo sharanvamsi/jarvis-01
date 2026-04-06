@@ -4,19 +4,23 @@ import { auth } from "./auth"
 import { redirect } from "next/navigation"
 
 // ── CACHED HELPERS (deduped within a single render) ──────────
-const getEnrollmentCourseIds = cache(async (userId: string) => {
-  // Check if user has made explicit course selections
+// Shared enrollment filter: respect userSelected if any exist, else fall back to isCurrentSemester
+async function getUserCourseWhere(userId: string) {
   const selectedCount = await db.enrollment.count({
     where: { userId, userSelected: true },
   })
+  return {
+    userId,
+    ...(selectedCount > 0
+      ? { userSelected: true }
+      : { course: { isCurrentSemester: true } }),
+  }
+}
 
+const getEnrollmentCourseIds = cache(async (userId: string) => {
+  const where = await getUserCourseWhere(userId)
   const enrollments = await db.enrollment.findMany({
-    where: {
-      userId,
-      ...(selectedCount > 0
-        ? { userSelected: true }
-        : { course: { isCurrentSemester: true } }),
-    },
+    where,
     select: { courseId: true },
   })
   return enrollments.map((e) => e.courseId)
@@ -32,17 +36,9 @@ export async function requireAuth() {
 // ── COURSES ───────────────────────────────────────────────────
 export const getUserCourses = cache(async (userId: string) => {
   try {
-    const selectedCount = await db.enrollment.count({
-      where: { userId, userSelected: true },
-    })
-
+    const where = await getUserCourseWhere(userId)
     const enrollments = await db.enrollment.findMany({
-      where: {
-        userId,
-        ...(selectedCount > 0
-          ? { userSelected: true }
-          : { course: { isCurrentSemester: true } }),
-      },
+      where,
       include: {
         course: {
           include: {
@@ -437,8 +433,9 @@ export async function getCourseAssignmentOverrides(
 
 export async function getUserGradesWithOverrides(userId: string) {
   try {
+    const where = await getUserCourseWhere(userId);
     const enrollments = await db.enrollment.findMany({
-      where: { userId },
+      where,
       include: {
         course: {
           include: {
@@ -466,9 +463,7 @@ export async function getUserGradesWithOverrides(userId: string) {
         }
       }
     });
-    return enrollments
-      .map(e => e.course)
-      .filter(c => c.isCurrentSemester);
+    return enrollments.map(e => e.course);
   } catch (error) {
     console.error('[data] getUserGradesWithOverrides error:', error);
     return [];
@@ -501,17 +496,9 @@ export function parseCourseCodeForBT(
 
 export const getGradesPageData = cache(async (userId: string) => {
   try {
-    const selectedCount = await db.enrollment.count({
-      where: { userId, userSelected: true },
-    })
-
+    const where = await getUserCourseWhere(userId)
     const enrollments = await db.enrollment.findMany({
-      where: {
-        userId,
-        ...(selectedCount > 0
-          ? { userSelected: true }
-          : { course: { isCurrentSemester: true } }),
-      },
+      where,
       include: {
         course: {
           include: {
