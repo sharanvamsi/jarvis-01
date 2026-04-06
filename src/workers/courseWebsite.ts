@@ -4,6 +4,7 @@
 
 import { createHash } from 'crypto';
 import { db } from '../lib/db';
+import type { Prisma } from '../generated/prisma';
 
 const THRESHOLD_HOURS = 24;
 const LLM_MODEL = 'claude-haiku-4-5-20251001';
@@ -316,7 +317,7 @@ async function writeScrapedData(
   }));
 
   // --- Atomic transaction: delete all then createMany ---
-  await db.$transaction(async (tx) => {
+  await db.$transaction(async (tx: Prisma.TransactionClient) => {
     // Delete all existing data for this course/user
     await tx.rawCourseWebsiteAssignment.deleteMany({ where: { userId, courseId } });
     await tx.officeHour.deleteMany({ where: { courseId } });
@@ -375,12 +376,12 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
   });
 
   const coursesToSync = enrollments
-    .map(e => e.course)
-    .filter(c => {
+    .map((e: typeof enrollments[number]) => e.course)
+    .filter((c: { id: string; courseCode: string | null; websiteUrl: string | null }) => {
       const url = c.websiteUrl ?? KNOWN_URLS[c.courseCode ?? ''];
       return !!url;
     })
-    .map(c => ({
+    .map((c: { id: string; courseCode: string | null; websiteUrl: string | null }) => ({
       ...c,
       websiteUrl: c.websiteUrl ?? KNOWN_URLS[c.courseCode ?? ''] ?? null,
     }));

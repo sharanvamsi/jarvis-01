@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../lib/db';
+import type { Prisma } from '../generated/prisma';
 import { decrypt } from '../lib/crypto';
 import { fetchCanvasSyllabus, fetchWebsiteSyllabus } from '../lib/syllabus-fetcher';
 import { extractSyllabus } from '../lib/syllabus-extractor';
@@ -96,7 +97,7 @@ export async function syncSyllabus(userId: string): Promise<void> {
 
     // Store in DB — component groups only, no assignment matching here.
     // Assignment matching runs in syncUser after all workers complete.
-    await db.$transaction(async (tx) => {
+    await db.$transaction(async (tx: Prisma.TransactionClient) => {
       // Upsert syllabus
       const syllabus = await tx.syllabus.upsert({
         where: { courseId: course.id },

@@ -197,8 +197,8 @@ export async function runEdSync(userId: string): Promise<void> {
     });
 
     const edCourses = enrollments
-      .map((e) => e.course)
-      .filter((c) => c.edCourseId !== null);
+      .map((e: typeof enrollments[number]) => e.course)
+      .filter((c: { id: string; courseCode: string | null; courseName: string | null; edCourseId: string | null }) => c.edCourseId !== null);
 
     console.log(
       `[ed] Found ${edCourses.length} courses with Ed configured`
@@ -422,7 +422,7 @@ async function flagExamStatThreads(
     if (!isExamThread || !isStatRelease) continue;
 
     // Match to assignment
-    const matched = examAssignments.find((a) => {
+    const matched = examAssignments.find((a: typeof examAssignments[number]) => {
       const name = a.name.toLowerCase();
       return (
         ((title.includes('midterm 1') || title.includes('mt1') || title.includes('mt 1')) &&

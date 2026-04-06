@@ -187,7 +187,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
             syncedAt: now,
           },
         })
-        .catch((e) => {
+        .catch((e: any) => {
           console.error('[gradescope] Course upsert error:', e.message);
         });
 
@@ -195,7 +195,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
       if (!isCurrent) continue;
 
       // Match to DB course by code
-      const matchedEnrollment = enrollments.find((e) => {
+      const matchedEnrollment = enrollments.find((e: typeof enrollments[number]) => {
         const code = (e.course.courseCode ?? '').toUpperCase();
         const gsShort = gsCourse.short_name.toUpperCase();
         // Direct match: "CS 162" === "CS 162"
@@ -300,7 +300,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
                 syncedAt: now,
               },
             })
-            .catch((e) => {
+            .catch((e: any) => {
               if (!e.message.includes('Unique')) {
                 console.error(
                   '[gradescope] Raw assignment error:',
@@ -310,7 +310,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
             });
 
           // Try to match to unified assignment by name
-          const matched = unifiedAssignments.find((ua) =>
+          const matched = unifiedAssignments.find((ua: typeof unifiedAssignments[number]) =>
             assignmentNamesMatch(ua.name ?? '', ga.title),
           );
 
