@@ -85,6 +85,20 @@ export async function syncUser(userId: string): Promise<void> {
     data: { lastSyncAt: new Date() },
   });
 
+  // Notify web app to revalidate cached pages for this user
+  const webUrl = process.env.WEB_ORIGIN;
+  if (webUrl) {
+    fetch(`${webUrl}/api/revalidate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
+      },
+      body: JSON.stringify({ userId }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  }
+
   console.log(`[syncUser] Sync complete for user ${userId}`);
 }
 
