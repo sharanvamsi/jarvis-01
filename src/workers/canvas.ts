@@ -3,8 +3,6 @@ import { decrypt } from '../lib/crypto';
 import {
   normalizeCourseCode,
   isNonAcademicCourse,
-  isCurrentCourse,
-  correctEnrollmentState,
   parseNextCanvasLink,
   extractSemester,
 } from '../lib/normalize';
@@ -16,8 +14,33 @@ interface CanvasCourseData {
   name: string | null;
   course_code: string | null;
   enrollment_term_id: number | null;
+  workflow_state: string | null;
   enrollments: Array<{ enrollment_state: string | null; type: string | null }> | null;
+  term?: { start_at: string | null; end_at: string | null } | null;
   html_url: string | null;
+}
+
+/**
+ * Determine if a course is truly current using Canvas term dates.
+ * This replaces the brittle string-matching approach.
+ */
+function isTrulyCurrentCourse(course: CanvasCourseData, now: Date): boolean {
+  // Concluded courses are never current
+  if (course.workflow_state === 'concluded') return false;
+
+  // If term end date exists, must not have ended
+  if (course.term?.end_at) {
+    const termEnd = new Date(course.term.end_at);
+    if (termEnd < now) return false;
+  }
+
+  // If term start date exists, must have started
+  if (course.term?.start_at) {
+    const termStart = new Date(course.term.start_at);
+    if (termStart > now) return false;
+  }
+
+  return true;
 }
 
 interface CanvasAssignmentData {
@@ -72,15 +95,38 @@ function inferAssignmentType(
   return 'homework';
 }
 
+async function fetchWithRetry(
+  url: string,
+  token: string,
+  maxRetries = 3
+): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` },
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (res.status !== 429) return res;
+    if (attempt === maxRetries) {
+      throw new Error(`Canvas API 429 after ${maxRetries} retries on ${url}`);
+    }
+
+    const retryAfter = res.headers.get('Retry-After');
+    const waitMs = retryAfter
+      ? parseInt(retryAfter) * 1000
+      : Math.pow(2, attempt) * 1000;
+    console.warn(`[canvas] 429 rate limited — waiting ${waitMs}ms (attempt ${attempt + 1})`);
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+  }
+  throw new Error('Unreachable');
+}
+
 async function fetchPaginated<T>(url: string, token: string): Promise<T[]> {
   const results: T[] = [];
   let nextUrl: string | null = url;
 
   while (nextUrl) {
-    const response = await fetch(nextUrl, {
-      headers: { 'Authorization': `Bearer ${token}` },
-      signal: AbortSignal.timeout(30000),
-    });
+    const response = await fetchWithRetry(nextUrl, token);
 
     if (!response.ok) {
       throw new Error(`Canvas API error: ${response.status} ${response.statusText}`);
@@ -120,7 +166,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
     console.error('[canvas] Failed to decrypt token:', err);
     return;
   }
-  const currentSemester = user.currentSemester;
+  const now = new Date();
 
   // Check if initial backfill needed
   const isFirstSync = !(await db.syncLog.findFirst({
@@ -146,7 +192,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
     let courses: CanvasCourseData[];
     try {
       courses = await fetchPaginated<CanvasCourseData>(
-        `${BASE_URL}/courses?include[]=enrollments&per_page=100`,
+        `${BASE_URL}/courses?enrollment_state=active&include[]=enrollments&include[]=term&per_page=100`,
         token
       );
       recordsFetched += courses.length;
@@ -172,18 +218,8 @@ export async function runCanvasSync(userId: string): Promise<void> {
       if (!course.name || !course.enrollments?.length) return;
       if (isNonAcademicCourse(course.name, course.course_code || '')) return;
 
-      const correctedState = correctEnrollmentState(
-        course.enrollments[0]?.enrollment_state || null,
-        course.name,
-        course.course_code || ''
-      );
-
-      const isCurrent = isCurrentCourse(
-        course.name,
-        course.course_code || '',
-        currentSemester
-      );
-
+      const enrollmentState = course.enrollments[0]?.enrollment_state || 'active';
+      const isCurrent = isTrulyCurrentCourse(course, now);
       const canvasCourseId = String(course.id);
 
       // Upsert RawCanvasCourse
@@ -195,7 +231,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
           name: course.name,
           courseCode: course.course_code,
           term: extractSemester(course.name, course.course_code || ''),
-          enrollmentState: correctedState,
+          enrollmentState,
           canvasUrl: course.html_url,
           isCurrent,
           rawJson: course as any,
@@ -203,56 +239,63 @@ export async function runCanvasSync(userId: string): Promise<void> {
         update: {
           name: course.name,
           courseCode: course.course_code,
-          enrollmentState: correctedState,
+          enrollmentState,
           isCurrent,
           rawJson: course as any,
           syncedAt: new Date(),
         },
       });
 
-      if (isCurrent || isFirstSync) {
-        const normalizedCode = normalizeCourseCode(course.course_code || course.name);
-        const term = extractSemester(course.name, course.course_code || '');
+      // Always create Course + Enrollment for active courses (API pre-filtered)
+      const normalizedCode = normalizeCourseCode(course.course_code || course.name);
+      const term = extractSemester(course.name, course.course_code || '');
 
-        // Upsert Course (shared)
-        const upsertedCourse = await db.course.upsert({
-          where: { courseCode_term: { courseCode: normalizedCode, term } },
-          create: {
-            courseCode: normalizedCode,
-            courseName: course.name,
-            term,
-            enrollmentState: correctedState,
-            canvasId: canvasCourseId,
-            isCurrentSemester: isCurrent,
-          },
-          update: {
-            courseName: course.name,
-            enrollmentState: correctedState,
-            canvasId: canvasCourseId,
-            isCurrentSemester: isCurrent,
-          },
-        });
+      const upsertedCourse = await db.course.upsert({
+        where: { courseCode_term: { courseCode: normalizedCode, term } },
+        create: {
+          courseCode: normalizedCode,
+          courseName: course.name,
+          term,
+          enrollmentState,
+          canvasId: canvasCourseId,
+          isCurrentSemester: isCurrent,
+        },
+        update: {
+          courseName: course.name,
+          enrollmentState,
+          canvasId: canvasCourseId,
+          isCurrentSemester: isCurrent,
+        },
+      });
 
-        // Upsert Enrollment
-        await db.enrollment.upsert({
-          where: { userId_courseId: { userId, courseId: upsertedCourse.id } },
-          create: { userId, courseId: upsertedCourse.id, role: 'student' },
-          update: {},
-        });
+      await db.enrollment.upsert({
+        where: { userId_courseId: { userId, courseId: upsertedCourse.id } },
+        create: { userId, courseId: upsertedCourse.id, role: 'student' },
+        update: {},
+      });
 
-        if (isCurrent) currentCourseIds.push(canvasCourseId);
-        recordsCreated++;
-      }
+      if (isCurrent) currentCourseIds.push(canvasCourseId);
+      recordsCreated++;
     }));
 
     console.log(`[canvas] Processed ${currentCourseIds.length} current courses in ${Date.now() - syncStart}ms`);
 
-    // Step 6: Fetch assignments for courses
-    const courseIdsToSync = isFirstSync
-      ? courses.filter(c => c.name).map(c => String(c.id))
-      : currentCourseIds;
+    console.log(`[canvas] ${currentCourseIds.length} current courses (from ${courses.length} active enrollments)`);
 
-    await Promise.allSettled(courseIdsToSync.map(async (courseId) => {
+    // Mark previously-current courses as no longer current
+    if (currentCourseIds.length > 0) {
+      await db.course.updateMany({
+        where: {
+          enrollments: { some: { userId } },
+          canvasId: { notIn: currentCourseIds },
+          isCurrentSemester: true,
+        },
+        data: { isCurrentSemester: false },
+      });
+    }
+
+    // Step 6: Fetch assignments only for current courses
+    await Promise.allSettled(currentCourseIds.map(async (courseId) => {
       try {
         // Fetch assignments, submissions, announcements in parallel
         const [assignmentsData, submissionsData, announcementsData] = await Promise.all([
