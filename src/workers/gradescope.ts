@@ -43,7 +43,16 @@ async function callService(
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Gradescope service error ${response.status}: ${err}`);
+    // Parse the JSON detail for a cleaner error message
+    let message = err;
+    try {
+      const parsed = JSON.parse(err);
+      if (parsed.detail) message = parsed.detail;
+    } catch {}
+    if (response.status === 401) {
+      throw new Error(`Invalid Gradescope credentials — please update your email and password in Settings`);
+    }
+    throw new Error(`Gradescope sync failed: ${message}`);
   }
 
   return response.json();
@@ -121,6 +130,16 @@ export async function runGradescopeSync(userId: string): Promise<void> {
       '[gradescope] Service not running at',
       GRADESCOPE_SERVICE_URL,
     );
+    // Write a failed syncLog so the user sees why it didn't work
+    await db.syncLog.create({
+      data: {
+        userId,
+        service: 'gradescope',
+        status: 'failed',
+        completedAt: new Date(),
+        errorMessage: 'Gradescope sync service is temporarily unavailable. Your data will sync automatically when the service is back online.',
+      },
+    });
     return;
   }
 
