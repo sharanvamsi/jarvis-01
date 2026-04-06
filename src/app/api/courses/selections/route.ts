@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { normalizeCourseCode, extractSemester } from '@/lib/canvas-utils'
 
 /**
  * POST /api/courses/selections
  *
  * Save the user's course selections from the settings page.
- * Accepts { selectedCanvasIds: string[] } — courses the user wants synced.
- * All other enrolled courses get userSelected=false.
+ * Creates Course + Enrollment records for courses that don't exist yet
+ * (e.g. past-semester courses from RawCanvasCourse).
  */
 export async function POST(req: NextRequest) {
   const session = await auth()
@@ -28,21 +29,40 @@ export async function POST(req: NextRequest) {
 
   const userId = session.user.id
 
-  // Get all courses with matching canvasIds
-  const courses = await db.course.findMany({
-    where: { canvasId: { in: selectedCanvasIds } },
-    select: { id: true, canvasId: true },
-  })
-
-  const selectedCourseIds = new Set(courses.map((c) => c.id))
-
   await db.$transaction(async (tx) => {
-    // Mark selected enrollments
-    for (const course of courses) {
+    // For each selected canvasId, ensure a Course record exists
+    for (const canvasId of selectedCanvasIds) {
+      let course = await tx.course.findFirst({ where: { canvasId } })
+
+      if (!course) {
+        // Course record doesn't exist — create it from RawCanvasCourse
+        const raw = await tx.rawCanvasCourse.findUnique({
+          where: { userId_canvasCourseId: { userId, canvasCourseId: canvasId } },
+        })
+        if (!raw || !raw.name) continue
+
+        const courseCode = normalizeCourseCode(raw.courseCode ?? raw.name)
+        const term = raw.term ?? extractSemester(raw.name, raw.courseCode ?? '')
+
+        course = await tx.course.upsert({
+          where: { courseCode_term: { courseCode, term } },
+          create: {
+            courseCode,
+            courseName: raw.name,
+            term,
+            canvasId,
+            enrollmentState: raw.enrollmentState ?? 'active',
+            isCurrentSemester: raw.isCurrent,
+          },
+          update: {
+            canvasId,
+          },
+        })
+      }
+
+      // Mark enrollment as selected
       await tx.enrollment.upsert({
-        where: {
-          userId_courseId: { userId, courseId: course.id },
-        },
+        where: { userId_courseId: { userId, courseId: course.id } },
         create: {
           userId,
           courseId: course.id,
@@ -56,16 +76,22 @@ export async function POST(req: NextRequest) {
     }
 
     // Mark all other enrollments as deselected
+    const selectedCourses = await tx.course.findMany({
+      where: { canvasId: { in: selectedCanvasIds } },
+      select: { id: true },
+    })
+    const selectedCourseIds = selectedCourses.map((c) => c.id)
+
     await tx.enrollment.updateMany({
       where: {
         userId,
-        courseId: { notIn: [...selectedCourseIds] },
+        courseId: { notIn: selectedCourseIds },
       },
       data: { userSelected: false },
     })
   })
 
-  // Trigger pipeline sync with updated selections
+  // Trigger pipeline sync
   const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
   if (pipelineUrl) {
     fetch(`${pipelineUrl}/sync`, {
