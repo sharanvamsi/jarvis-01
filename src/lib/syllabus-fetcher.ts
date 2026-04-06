@@ -1,8 +1,9 @@
-import { PDFParse } from 'pdf-parse';
-
 const CANVAS_BASE = 'https://bcourses.berkeley.edu/api/v1';
 
 async function extractTextFromPdf(buffer: ArrayBuffer): Promise<string> {
+  // Dynamic import to avoid crashing at startup — pdf-parse v2 loads pdfjs-dist
+  // which tries to polyfill browser APIs (DOMMatrix, ImageData, Path2D) at module load
+  const { PDFParse } = await import('pdf-parse');
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
   const result = await parser.getText();
   await parser.destroy();
