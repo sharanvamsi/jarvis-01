@@ -1,6 +1,26 @@
+import { cache } from "react"
 import { db } from "./db"
 import { auth } from "./auth"
 import { redirect } from "next/navigation"
+
+// ── CACHED HELPERS (deduped within a single render) ──────────
+const getEnrollmentCourseIds = cache(async (userId: string) => {
+  // Check if user has made explicit course selections
+  const selectedCount = await db.enrollment.count({
+    where: { userId, userSelected: true },
+  })
+
+  const enrollments = await db.enrollment.findMany({
+    where: {
+      userId,
+      ...(selectedCount > 0
+        ? { userSelected: true }
+        : { course: { isCurrentSemester: true } }),
+    },
+    select: { courseId: true },
+  })
+  return enrollments.map((e) => e.courseId)
+})
 
 // ── AUTH HELPER ───────────────────────────────────────────────
 export async function requireAuth() {
@@ -10,10 +30,19 @@ export async function requireAuth() {
 }
 
 // ── COURSES ───────────────────────────────────────────────────
-export async function getUserCourses(userId: string) {
+export const getUserCourses = cache(async (userId: string) => {
   try {
+    const selectedCount = await db.enrollment.count({
+      where: { userId, userSelected: true },
+    })
+
     const enrollments = await db.enrollment.findMany({
-      where: { userId },
+      where: {
+        userId,
+        ...(selectedCount > 0
+          ? { userSelected: true }
+          : { course: { isCurrentSemester: true } }),
+      },
       include: {
         course: {
           include: {
@@ -37,16 +66,14 @@ export async function getUserCourses(userId: string) {
         },
       },
     })
-    return enrollments
-      .map((e) => e.course)
-      .filter((c) => c.isCurrentSemester)
+    return enrollments.map((e) => e.course)
   } catch (error) {
     console.error("[data] getUserCourses:", error)
     return []
   }
-}
+})
 
-export async function getCourseById(courseId: string, userId: string) {
+export const getCourseById = cache(async (courseId: string, userId: string) => {
   try {
     return await db.course.findUnique({
       where: { id: courseId },
@@ -75,18 +102,14 @@ export async function getCourseById(courseId: string, userId: string) {
     console.error("[data] getCourseById:", error)
     return null
   }
-}
+})
 
 // ── ASSIGNMENTS ────────────────────────────────────────────────
-export async function getUpcomingAssignments(userId: string, days = 14) {
+export const getUpcomingAssignments = cache(async (userId: string, days = 14) => {
   try {
     const now = new Date()
     const future = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map((e) => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
 
     const assignments = await db.assignment.findMany({
       where: {
@@ -136,16 +159,12 @@ export async function getUpcomingAssignments(userId: string, days = 14) {
     console.error("[data] getUpcomingAssignments:", error)
     return []
   }
-}
+})
 
-export async function getMissingAssignments(userId: string) {
+export const getMissingAssignments = cache(async (userId: string) => {
   try {
     const now = new Date()
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map((e) => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
 
     const pastDue = await db.assignment.findMany({
       where: {
@@ -198,16 +217,12 @@ export async function getMissingAssignments(userId: string) {
     console.error("[data] getMissingAssignments:", error)
     return []
   }
-}
+})
 
 // ── ANNOUNCEMENTS ──────────────────────────────────────────────
-export async function getCanvasAnnouncements(userId: string) {
+export const getCanvasAnnouncements = cache(async (userId: string) => {
   try {
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map((e) => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
 
     return await db.canvasAnnouncement.findMany({
       where: { courseId: { in: courseIds } },
@@ -221,15 +236,11 @@ export async function getCanvasAnnouncements(userId: string) {
     console.error("[data] getCanvasAnnouncements:", error)
     return []
   }
-}
+})
 
-export async function getEdThreads(userId: string, threadType?: 'announcement' | 'question') {
+export const getEdThreads = cache(async (userId: string, threadType?: 'announcement' | 'question') => {
   try {
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map((e) => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
 
     return await db.edThread.findMany({
       where: {
@@ -246,10 +257,10 @@ export async function getEdThreads(userId: string, threadType?: 'announcement' |
     console.error("[data] getEdThreads:", error)
     return []
   }
-}
+})
 
 // ── CALENDAR ───────────────────────────────────────────────────
-export async function getTodaysEvents(userId: string) {
+export const getTodaysEvents = cache(async (userId: string) => {
   try {
     const now = new Date()
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -266,18 +277,18 @@ export async function getTodaysEvents(userId: string) {
     console.error("[data] getTodaysEvents:", error)
     return []
   }
-}
+})
 
-export async function hasCalendarEvents(userId: string): Promise<boolean> {
+export const hasCalendarEvents = cache(async (userId: string): Promise<boolean> => {
   try {
     const count = await db.calendarEvent.count({ where: { userId }, take: 1 })
     return count > 0
   } catch {
     return false
   }
-}
+})
 
-export async function getWeekCalendarEvents(userId: string, weekOffset = 0) {
+export const getWeekCalendarEvents = cache(async (userId: string, weekOffset = 0) => {
   try {
     const now = new Date()
     const day = now.getDay()
@@ -298,18 +309,14 @@ export async function getWeekCalendarEvents(userId: string, weekOffset = 0) {
     console.error("[data] getWeekCalendarEvents:", error)
     return []
   }
-}
+})
 
 // ── STATS ──────────────────────────────────────────────────────
-export async function getDashboardStats(userId: string) {
+export const getDashboardStats = cache(async (userId: string) => {
   try {
     const now = new Date()
     const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map((e) => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
 
     const [dueThisWeek, totalAssignments, missingCount] = await Promise.all([
       db.assignment.count({
@@ -325,7 +332,18 @@ export async function getDashboardStats(userId: string) {
           isCurrentSemester: true,
         },
       }),
-      getMissingAssignments(userId).then((m) => m.length),
+      db.assignment.count({
+        where: {
+          courseId: { in: courseIds },
+          isCurrentSemester: true,
+          dueDate: { lt: now, not: null },
+          NOT: {
+            userAssignments: {
+              some: { userId, status: { in: ['submitted', 'graded'] } },
+            },
+          },
+        },
+      }),
     ])
 
     return { dueThisWeek, missingCount, totalAssignments }
@@ -333,16 +351,12 @@ export async function getDashboardStats(userId: string) {
     console.error("[data] getDashboardStats:", error)
     return { dueThisWeek: 0, missingCount: 0, totalAssignments: 0 }
   }
-}
+})
 
 // ── GRADES ─────────────────────────────────────────────────────
-export async function getUserGrades(userId: string) {
+export const getUserGrades = cache(async (userId: string) => {
   try {
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map((e) => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
 
     const assignments = await db.assignment.findMany({
       where: {
@@ -379,7 +393,7 @@ export async function getUserGrades(userId: string) {
     console.error("[data] getUserGrades:", error)
     return []
   }
-}
+})
 
 // ── ASSIGNMENT OVERRIDES ──────────────────────────────────────
 
@@ -485,10 +499,19 @@ export function parseCourseCodeForBT(
   return { subject: BT_SUBJECT_MAP[dept] ?? dept, courseNumber: num }
 }
 
-export async function getGradesPageData(userId: string) {
+export const getGradesPageData = cache(async (userId: string) => {
   try {
+    const selectedCount = await db.enrollment.count({
+      where: { userId, userSelected: true },
+    })
+
     const enrollments = await db.enrollment.findMany({
-      where: { userId },
+      where: {
+        userId,
+        ...(selectedCount > 0
+          ? { userSelected: true }
+          : { course: { isCurrentSemester: true } }),
+      },
       include: {
         course: {
           include: {
@@ -510,7 +533,6 @@ export async function getGradesPageData(userId: string) {
 
     const courses = enrollments
       .map((e) => e.course)
-      .filter((c) => c.isCurrentSemester)
       .sort((a, b) => a.courseCode.localeCompare(b.courseCode))
 
     // Batch-fetch BT snapshots and syllabi (2 queries total, not 2 per course)
@@ -664,13 +686,13 @@ export async function getGradesPageData(userId: string) {
     console.error("[data] getGradesPageData:", error)
     return []
   }
-}
+})
 
 // ── BERKELEYTIME ──────────────────────────────────────────────
-export async function getBerkeleyTimeSnapshots(
+export const getBerkeleyTimeSnapshots = cache(async (
   subject: string,
   courseNumber: string
-) {
+) => {
   try {
     const btCourse = await db.berkeleyTimeCourse.findUnique({
       where: { subject_courseNumber: { subject, courseNumber } },
@@ -685,10 +707,10 @@ export async function getBerkeleyTimeSnapshots(
     console.error("[data] getBerkeleyTimeSnapshots error:", error)
     return []
   }
-}
+})
 
 // ── SYLLABUS ──────────────────────────────────────────────────
-export async function getSyllabusForCourse(courseId: string, userId?: string) {
+export const getSyllabusForCourse = cache(async (courseId: string, userId?: string) => {
   try {
     return await db.syllabus.findUnique({
       where: { courseId },
@@ -715,7 +737,7 @@ export async function getSyllabusForCourse(courseId: string, userId?: string) {
     console.error('[data] getSyllabusForCourse error:', error)
     return null
   }
-}
+})
 
 export async function confirmSyllabus(syllabusId: string, userId: string) {
   try {
@@ -747,7 +769,7 @@ export async function upsertExamStatManual(
 }
 
 // ── USER CONNECTION STATUS ─────────────────────────────────────
-export async function getUserConnectionStatus(userId: string) {
+export const getUserConnectionStatus = cache(async (userId: string) => {
   try {
     const [tokens, lastSyncs] = await Promise.all([
       db.syncToken.findMany({
@@ -766,10 +788,10 @@ export async function getUserConnectionStatus(userId: string) {
     console.error("[data] getUserConnectionStatus:", error)
     return { tokens: [], lastSyncs: [] }
   }
-}
+})
 
 // ── TOKEN CHECK ────────────────────────────────────────────────
-export async function hasCanvasToken(userId: string): Promise<boolean> {
+export const hasCanvasToken = cache(async (userId: string): Promise<boolean> => {
   try {
     const token = await db.syncToken.findUnique({
       where: { userId_service: { userId, service: "canvas" } },
@@ -778,16 +800,34 @@ export async function hasCanvasToken(userId: string): Promise<boolean> {
   } catch {
     return false
   }
-}
+})
+
+export const hasEdToken = cache(async (userId: string): Promise<boolean> => {
+  try {
+    const token = await db.syncToken.findUnique({
+      where: { userId_service: { userId, service: "ed" } },
+    })
+    return !!token
+  } catch {
+    return false
+  }
+})
+
+export const hasGradescopeToken = cache(async (userId: string): Promise<boolean> => {
+  try {
+    const token = await db.syncToken.findUnique({
+      where: { userId_service: { userId, service: "gradescope" } },
+    })
+    return !!token
+  } catch {
+    return false
+  }
+})
 
 // ── OFFICE HOURS ────────────────────────────────────────────────
-export async function getTodaysOfficeHours(userId: string) {
+export const getTodaysOfficeHours = cache(async (userId: string) => {
   try {
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map(e => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
     const todayDow = new Date().getDay() // 0=Sun...6=Sat
     return await db.officeHour.findMany({
       where: {
@@ -803,16 +843,12 @@ export async function getTodaysOfficeHours(userId: string) {
     console.error('[data] getTodaysOfficeHours:', error)
     return []
   }
-}
+})
 
 // ── EXAMS ────────────────────────────────────────────────────────
-export async function getUpcomingExams(userId: string) {
+export const getUpcomingExams = cache(async (userId: string) => {
   try {
-    const enrollments = await db.enrollment.findMany({
-      where: { userId },
-      select: { courseId: true },
-    })
-    const courseIds = enrollments.map(e => e.courseId)
+    const courseIds = await getEnrollmentCourseIds(userId)
     return await db.exam.findMany({
       where: {
         courseId: { in: courseIds },
@@ -828,4 +864,4 @@ export async function getUpcomingExams(userId: string) {
     console.error('[data] getUpcomingExams:', error)
     return []
   }
-}
+})

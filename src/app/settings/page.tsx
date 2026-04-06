@@ -7,6 +7,7 @@ import EdCard from "@/components/settings/EdCard";
 import GradescopeCard from "@/components/settings/GradescopeCard";
 import GoogleCalendarCard from "@/components/settings/GoogleCalendarCard";
 import CourseWebsitesCard from "@/components/settings/CourseWebsitesCard";
+import CourseManagementCard from "@/components/settings/CourseManagementCard";
 import SyllabusUploadCard from "@/components/settings/SyllabusUploadCard";
 import DeleteAccountSection from "@/components/settings/DeleteAccountSection";
 
@@ -59,8 +60,14 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Data Sources */}
+        {/* Courses */}
         <h2 className="text-[#F5F5F5] text-sm font-medium mb-4">
+          Courses
+        </h2>
+        <CourseManagementCard />
+
+        {/* Data Sources */}
+        <h2 className="text-[#F5F5F5] text-sm font-medium mb-4 mt-8">
           Data Sources
         </h2>
         <CanvasCard />

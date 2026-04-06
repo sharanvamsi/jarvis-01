@@ -70,8 +70,11 @@ export async function POST(req: NextRequest) {
             userId: session.user.id,
             courseId: upserted.id,
             role: 'student',
+            userSelected: true,
           },
-          update: {},
+          update: {
+            userSelected: true,
+          },
         })
       }
 
@@ -81,6 +84,20 @@ export async function POST(req: NextRequest) {
         data: { onboardingDone: true },
       })
     })
+
+    // Trigger pipeline sync now that courses are selected
+    const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
+    if (pipelineUrl) {
+      fetch(`${pipelineUrl}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
+        },
+        body: JSON.stringify({ userId: session.user.id }),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {})
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {
