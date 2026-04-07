@@ -37,9 +37,16 @@ export default function CanvasCard() {
   const fetchStatus = useCallback(() => {
     fetch('/api/tokens/canvas/status')
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('Failed to fetch status')))
-      .then((data: CanvasStatus) => { setStatus(data); setLoading(false); })
+      .then((data: CanvasStatus) => {
+        setStatus(data);
+        setLoading(false);
+        // If a sync is running (e.g. triggered during onboarding), auto-start polling
+        if (data.connected && data.syncStatus === 'running' && syncState === 'idle') {
+          startSyncPolling(true);
+        }
+      })
       .catch(() => setLoading(false));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
@@ -51,21 +58,22 @@ export default function CanvasCard() {
     };
   }, []);
 
-  async function startSyncPolling() {
+  async function startSyncPolling(skipTrigger = false) {
     setSyncState('syncing');
     setSyncError(null);
     setElapsedSyncSeconds(0);
     if (elapsedRef.current) clearInterval(elapsedRef.current);
     elapsedRef.current = setInterval(() => setElapsedSyncSeconds(s => s + 1), 1000);
 
-    try {
-      const triggerRes = await fetch('/api/sync/trigger', { method: 'POST' });
-      if (triggerRes.status === 429) {
-        // A sync is already running — our data will be included
-        // Continue polling to detect when it finishes
+    if (!skipTrigger) {
+      try {
+        const triggerRes = await fetch('/api/sync/trigger', { method: 'POST' });
+        if (triggerRes.status === 429) {
+          // A sync is already running
+        }
+      } catch {
+        // Pipeline unreachable — continue polling anyway
       }
-    } catch {
-      // Pipeline unreachable — continue polling anyway
     }
 
     let attempts = 0;
