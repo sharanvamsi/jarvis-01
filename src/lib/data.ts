@@ -481,7 +481,12 @@ export async function getUserGradesWithOverrides(userId: string) {
               include: {
                 componentGroups: true,
                 gradeScale: true,
-                clobberPolicies: true,
+                clobberPolicies: {
+                  include: {
+                    sourceGroup: { select: { id: true, name: true } },
+                    targetGroup: { select: { id: true, name: true } },
+                  },
+                },
               }
             },
           }
@@ -557,32 +562,22 @@ export const getGradesPageData = cache(async (userId: string) => {
         c.parsed !== null
       )
 
-    // Single query: all BT courses + snapshots for all enrolled courses
-    const btCourses = btParsed.length > 0
-      ? await db.berkeleyTimeCourse.findMany({
-          where: {
-            OR: btParsed.map((p) => ({
-              subject: p.parsed.subject,
-              courseNumber: p.parsed.courseNumber,
-            })),
-          },
-          include: {
-            snapshots: { orderBy: [{ year: "desc" }, { semester: "asc" }] },
-          },
-        })
-      : []
-
-    // Build BT lookup: courseId -> snapshots
-    const btByCourseId = new Map<string, typeof btCourses[0]["snapshots"]>()
-    for (const parsed of btParsed) {
-      const bt = btCourses.find(
-        (b) => b.subject === parsed.parsed.subject && b.courseNumber === parsed.parsed.courseNumber
-      )
-      if (bt) btByCourseId.set(parsed.courseId, bt.snapshots)
-    }
-
-    // Single query: all syllabi for all enrolled courses
-    const allSyllabi = await db.syllabus.findMany({
+    // Parallel: BT snapshots + syllabi (both only need courseIds, not each other)
+    const [btCourses, allSyllabi] = await Promise.all([
+      btParsed.length > 0
+        ? db.berkeleyTimeCourse.findMany({
+            where: {
+              OR: btParsed.map((p) => ({
+                subject: p.parsed.subject,
+                courseNumber: p.parsed.courseNumber,
+              })),
+            },
+            include: {
+              snapshots: { orderBy: [{ year: "desc" }, { semester: "asc" }] },
+            },
+          })
+        : Promise.resolve([]),
+      db.syllabus.findMany({
       where: { courseId: { in: courseIds } },
       include: {
         componentGroups: {
@@ -600,9 +595,25 @@ export const getGradesPageData = cache(async (userId: string) => {
           },
         },
         gradeScale: true,
-        clobberPolicies: true,
+        clobberPolicies: {
+          include: {
+            sourceGroup: { select: { id: true, name: true } },
+            targetGroup: { select: { id: true, name: true } },
+          },
+        },
       },
-    })
+    }),
+    ])
+
+    // Build BT lookup: courseId -> snapshots
+    const btByCourseId = new Map<string, typeof btCourses[0]["snapshots"]>()
+    for (const parsed of btParsed) {
+      const bt = btCourses.find(
+        (b) => b.subject === parsed.parsed.subject && b.courseNumber === parsed.parsed.courseNumber
+      )
+      if (bt) btByCourseId.set(parsed.courseId, bt.snapshots)
+    }
+
     const syllabusByCourseId = new Map(allSyllabi.map((s) => [s.courseId, s]))
 
     // Map results using the lookup maps (no additional queries)
@@ -677,6 +688,8 @@ export const getGradesPageData = cache(async (userId: string) => {
                 targetName: p.targetName,
                 comparisonType: p.comparisonType as 'raw' | 'zscore',
                 conditionText: p.conditionText,
+                sourceGroup: p.sourceGroup ?? null,
+                targetGroup: p.targetGroup ?? null,
               })),
               examStats: syllabus.componentGroups.flatMap((g) =>
                 g.assignments
@@ -742,7 +755,12 @@ export const getSyllabusForCourse = cache(async (courseId: string, userId?: stri
           },
         },
         gradeScale: true,
-        clobberPolicies: true,
+        clobberPolicies: {
+          include: {
+            sourceGroup: { select: { id: true, name: true } },
+            targetGroup: { select: { id: true, name: true } },
+          },
+        },
       },
     })
   } catch (error) {
@@ -833,6 +851,28 @@ export const hasGradescopeToken = cache(async (userId: string): Promise<boolean>
     return !!token
   } catch {
     return false
+  }
+})
+
+// ── GRADESCOPE SYNC ERROR ─────────────────────────────────────
+export const getGradescopeSyncError = cache(async (userId: string) => {
+  try {
+    const log = await db.syncLog.findFirst({
+      where: {
+        userId,
+        service: 'gradescope',
+        status: 'failed',
+      },
+      orderBy: { startedAt: 'desc' },
+    })
+    if (!log) return null
+    const isCredentialError =
+      log.errorMessage?.toLowerCase().includes('401') ||
+      log.errorMessage?.toLowerCase().includes('credential') ||
+      log.errorMessage?.toLowerCase().includes('password')
+    return isCredentialError ? log.errorMessage : null
+  } catch {
+    return null
   }
 })
 

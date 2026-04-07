@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { encrypt } from "@/lib/encrypt"
+import { triggerPipelineSync } from "@/lib/sync"
 
 export async function DELETE() {
   const session = await auth()
@@ -45,6 +46,9 @@ export async function POST(req: NextRequest) {
       userExpiresAt: expiryDate,
     },
   })
+
+  // Fire-and-forget sync trigger so Canvas data appears immediately
+  triggerPipelineSync(session.user.id)
 
   return NextResponse.json({ success: true })
 }

@@ -54,6 +54,8 @@ export interface ClobberPolicy {
   sourceName: string
   targetName: string
   comparisonType: 'raw' | 'zscore'
+  sourceGroup?: { id: string; name: string } | null
+  targetGroup?: { id: string; name: string } | null
 }
 
 export interface GradeScaleEntry {
@@ -280,13 +282,15 @@ function computeWeightedProjection(
     })
   }
 
-  // Apply clobber policies
+  // Apply clobber policies (FK-preferred with name fallback)
   for (const policy of clobberPolicies) {
+    const sourceGroupName = policy.sourceGroup?.name ?? policy.sourceName
+    const targetGroupName = policy.targetGroup?.name ?? policy.targetName
     const sourceGroup = groups.find((g) =>
-      g.name.toLowerCase().includes(policy.sourceName.toLowerCase())
+      g.name.toLowerCase().includes(sourceGroupName.toLowerCase())
     )
     const targetGroup = groups.find((g) =>
-      g.name.toLowerCase().includes(policy.targetName.toLowerCase())
+      g.name.toLowerCase().includes(targetGroupName.toLowerCase())
     )
     if (!sourceGroup || !targetGroup) continue
 
@@ -417,14 +421,16 @@ function computeCurvedProjection(
     examZScores.set(group.id, groupZ)
   }
 
-  // Apply clobber policies
+  // Apply clobber policies (FK-preferred with name fallback)
   for (const policy of clobberPolicies) {
     if (policy.comparisonType !== 'zscore') continue
+    const sourceGroupName = policy.sourceGroup?.name ?? policy.sourceName
+    const targetGroupName = policy.targetGroup?.name ?? policy.targetName
     const sourceGroup = examGroups.find((g) =>
-      g.name.toLowerCase().includes(policy.sourceName.toLowerCase())
+      g.name.toLowerCase().includes(sourceGroupName.toLowerCase())
     )
     const targetGroup = examGroups.find((g) =>
-      g.name.toLowerCase().includes(policy.targetName.toLowerCase())
+      g.name.toLowerCase().includes(targetGroupName.toLowerCase())
     )
     if (!sourceGroup || !targetGroup) continue
 

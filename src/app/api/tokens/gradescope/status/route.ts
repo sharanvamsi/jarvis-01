@@ -18,17 +18,30 @@ export async function GET() {
   })
 
   let lastSync: string | null = null
+  let syncError: string | null = null
   if (token) {
-    const log = await db.syncLog.findFirst({
-      where: {
-        userId: session.user.id,
-        service: "gradescope",
-        status: "success",
-      },
-      orderBy: { completedAt: "desc" },
-    })
-    lastSync = log?.completedAt?.toISOString() ?? null
+    const [successLog, latestLog] = await Promise.all([
+      db.syncLog.findFirst({
+        where: {
+          userId: session.user.id,
+          service: "gradescope",
+          status: "success",
+        },
+        orderBy: { completedAt: "desc" },
+      }),
+      db.syncLog.findFirst({
+        where: {
+          userId: session.user.id,
+          service: "gradescope",
+        },
+        orderBy: { startedAt: "desc" },
+      }),
+    ])
+    lastSync = successLog?.completedAt?.toISOString() ?? null
+    if (latestLog?.status === 'failed') {
+      syncError = latestLog.errorMessage ?? 'Last sync failed'
+    }
   }
 
-  return NextResponse.json({ connected: !!token, lastSync })
+  return NextResponse.json({ connected: !!token, lastSync, syncError })
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { triggerPipelineSync } from '@/lib/sync'
 
 export async function POST() {
   const session = await auth()
@@ -20,31 +21,19 @@ export async function POST() {
   })
 
   if (recentSync) {
-    const status = recentSync.status === 'running' ? 'Sync already in progress' : 'Please wait before syncing again'
-    return NextResponse.json({ ok: false, message: status }, { status: 429 })
+    return NextResponse.json(
+      {
+        ok: false,
+        alreadySyncing: true,
+        message: recentSync.status === 'running'
+          ? 'A sync is already running — your new data will be included'
+          : 'Please wait before syncing again',
+      },
+      { status: 429 }
+    )
   }
 
-  // Try to trigger pipeline
-  const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
-  if (pipelineUrl) {
-    try {
-      const res = await fetch(`${pipelineUrl}/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-pipeline-secret': process.env.PIPELINE_SECRET!,
-        },
-        body: JSON.stringify({ userId }),
-        signal: AbortSignal.timeout(5000),
-      })
-      if (res.ok) {
-        return NextResponse.json({ ok: true, message: 'Sync started' })
-      }
-    } catch {
-      // Pipeline unreachable — fall through
-    }
-  }
+  await triggerPipelineSync(userId)
 
-  // Fallback: let the scheduled sync pick it up
-  return NextResponse.json({ ok: true, message: 'Sync scheduled' })
+  return NextResponse.json({ ok: true, message: 'Sync started' })
 }

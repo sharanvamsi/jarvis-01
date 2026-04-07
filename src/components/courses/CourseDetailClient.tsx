@@ -6,7 +6,6 @@ import { ArrowLeft, ExternalLink, Mail, MessageSquare, Search, Users } from 'luc
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { SourceBadge } from '@/components/ui/SourceBadge'
 import { stripHtml, relativeTime } from '@/lib/utils'
-import { getCourseColor } from '@/lib/courseColors'
 
 type UserAssignment = {
   id: string
@@ -103,7 +102,6 @@ export function CourseDetailClient({ course }: { course: Course }) {
   const [edSearch, setEdSearch] = useState('')
   const [questionFilter, setQuestionFilter] = useState<'all' | 'answered' | 'unanswered'>('all')
 
-  const courseColor = getCourseColor(course.courseCode)
   const assignments = course.assignments
   const announcements = course.announcements
   const edThreads = course.edThreads
@@ -202,10 +200,7 @@ export function CourseDetailClient({ course }: { course: Course }) {
             <h1 className="text-[28px] font-medium text-[#F5F5F5]">
               {course.courseCode}
             </h1>
-            <span
-              className="px-2.5 py-1 rounded text-xs font-medium"
-              style={{ backgroundColor: `${courseColor}20`, color: courseColor }}
-            >
+            <span className="px-2.5 py-1 rounded text-xs font-medium bg-[#1F1F1F] text-[#A3A3A3]">
               {course.term ?? ''}
             </span>
             {course.websiteUrl && (

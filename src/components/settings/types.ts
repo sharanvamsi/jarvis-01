@@ -1,6 +1,7 @@
 export type ConnectionStatus = {
   connected: boolean;
   lastSync: string | null;
+  syncError?: string | null;
 };
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";

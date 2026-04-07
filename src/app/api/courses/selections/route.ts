@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { normalizeCourseCode, extractSemester } from '@/lib/canvas-utils'
+import { getCurrentTerms } from '@/lib/semester'
 
 /**
  * POST /api/courses/selections
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
 
   const userId = session.user.id
 
-  const CURRENT_TERMS = ['SP26']
+  const CURRENT_TERMS = getCurrentTerms()
 
   await db.$transaction(async (tx) => {
     for (const canvasId of selectedCanvasIds) {

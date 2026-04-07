@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { triggerPipelineSync } from '@/lib/sync'
 
 interface CourseSelection {
   canvasId: string
@@ -86,18 +87,7 @@ export async function POST(req: NextRequest) {
     })
 
     // Trigger pipeline sync now that courses are selected
-    const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
-    if (pipelineUrl) {
-      fetch(`${pipelineUrl}/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
-        },
-        body: JSON.stringify({ userId: session.user.id }),
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => {})
-    }
+    triggerPipelineSync(session.user.id)
 
     return NextResponse.json({ success: true })
   } catch (error) {

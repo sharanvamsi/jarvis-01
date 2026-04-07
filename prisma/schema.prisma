@@ -45,7 +45,7 @@ model User {
   rawEdThreads                RawEdThread[]
   rawCalendarEvents           RawCalendarEvent[]
   rawCourseWebsiteAssignments RawCourseWebsiteAssignment[]
-  rawCourseWebsitePageHashes  RawCourseWebsitePageHash[]
+  // rawCourseWebsitePageHashes removed — now course-scoped
   assignmentOverrides         AssignmentOverride[]
 
   @@map("users")
@@ -115,6 +115,7 @@ model Course {
   courseStaff        CourseStaff[]
   syllabusWeeks     SyllabusWeek[]
   syllabus          Syllabus?
+  websitePageHash   RawCourseWebsitePageHash?
   @@unique([courseCode, term])
   @@map("courses")
 }
@@ -592,15 +593,13 @@ model RawCourseWebsiteAssignment {
 
 model RawCourseWebsitePageHash {
   id          String    @id @default(cuid())
-  userId      String    @map("user_id")
-  courseId    String    @map("course_id")
+  courseId    String    @unique @map("course_id")
   contentHash String    @map("content_hash")
   lastChecked DateTime  @map("last_checked")
   lastChanged DateTime? @map("last_changed")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, courseId])
   @@map("raw_course_website_page_hashes")
 }
 
@@ -616,6 +615,7 @@ model SyncMetadata {
   lastForced               DateTime? @map("last_forced")
   needsUnification         Boolean   @default(true) @map("needs_unification")
   initialBackfillCompleted Boolean   @default(false) @map("initial_backfill_completed")
+  contentHash              String?   @map("content_hash") // for change-gate optimization
 
   @@unique([userId, source])
   @@map("sync_metadata")
@@ -715,15 +715,17 @@ model Syllabus {
 }
 
 model ComponentGroup {
-  id           String                   @id @default(cuid())
-  syllabusId   String                   @map("syllabus_id")
-  name         String
-  weight       Float
-  dropLowest   Int                      @default(0) @map("drop_lowest")
-  isBestOf     Boolean                  @default(false) @map("is_best_of")
-  isExam       Boolean                  @default(false) @map("is_exam")
-  syllabus     Syllabus                 @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
-  assignments  AssignmentGroupMapping[]
+  id             String                   @id @default(cuid())
+  syllabusId     String                   @map("syllabus_id")
+  name           String
+  weight         Float
+  dropLowest     Int                      @default(0) @map("drop_lowest")
+  isBestOf       Boolean                  @default(false) @map("is_best_of")
+  isExam         Boolean                  @default(false) @map("is_exam")
+  syllabus       Syllabus                 @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
+  assignments    AssignmentGroupMapping[]
+  clobberSources ClobberPolicy[]          @relation("ClobberSource")
+  clobberTargets ClobberPolicy[]          @relation("ClobberTarget")
 
   @@index([syllabusId])
   @@map("component_groups")
@@ -754,13 +756,17 @@ model GradeScale {
 }
 
 model ClobberPolicy {
-  id               String   @id @default(cuid())
-  syllabusId       String   @map("syllabus_id")
-  sourceName       String   @map("source_name")
-  targetName       String   @map("target_name")
-  comparisonType   String   @map("comparison_type")
-  conditionText    String   @map("condition_text")
-  syllabus         Syllabus @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
+  id               String          @id @default(cuid())
+  syllabusId       String          @map("syllabus_id")
+  sourceName       String          @map("source_name")
+  targetName       String          @map("target_name")
+  comparisonType   String          @map("comparison_type")
+  conditionText    String          @map("condition_text")
+  sourceGroupId    String?         @map("source_group_id")
+  targetGroupId    String?         @map("target_group_id")
+  syllabus         Syllabus        @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
+  sourceGroup      ComponentGroup? @relation("ClobberSource", fields: [sourceGroupId], references: [id], onDelete: SetNull)
+  targetGroup      ComponentGroup? @relation("ClobberTarget", fields: [targetGroupId], references: [id], onDelete: SetNull)
 
   @@index([syllabusId])
   @@map("clobber_policies")

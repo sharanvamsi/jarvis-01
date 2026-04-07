@@ -97,7 +97,7 @@ export default function Onboarding() {
   }
 
   // ── Step 4: Complete onboarding ────────────────────────────
-  async function handleFinish(destination: '/settings' | '/') {
+  async function handleFinish(destination: '/settings' | '/' | '/syncing') {
     setIsLoading(true);
     router.push(destination);
   }
@@ -296,7 +296,7 @@ export default function Onboarding() {
               </p>
 
               <button
-                onClick={() => handleFinish('/')}
+                onClick={() => handleFinish('/syncing')}
                 disabled={isLoading}
                 className="w-full bg-[#3B82F6] hover:bg-[#2563EB] disabled:bg-[#1F1F1F] disabled:text-[#525252] text-white font-medium py-3 px-4 rounded transition-colors flex items-center justify-center gap-2 mb-3"
               >

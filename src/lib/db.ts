@@ -1,24 +1,23 @@
+import { PrismaNeon } from "@prisma/adapter-neon"
 import { PrismaClient } from "../generated/prisma"
-
-// Fail fast on missing required env vars
-const requiredEnv = ['DATABASE_URL'] as const
-for (const key of requiredEnv) {
-  if (!process.env[key]) {
-    throw new Error(`[startup] Missing required environment variable: ${key}`)
-  }
-}
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-export const db =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+function createPrismaClient() {
+  const connectionString = process.env.DATABASE_URL!
+  const adapter = new PrismaNeon({ connectionString })
+  return new PrismaClient({
+    adapter,
     log: process.env.NODE_ENV === "development"
       ? ["error", "warn"]
       : ["error"],
   })
+}
+
+export const db =
+  globalForPrisma.prisma ?? createPrismaClient()
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = db

@@ -6,7 +6,6 @@ import { BookOpen, FileText, Mail, MessageSquare, Users, ExternalLink, Settings 
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { SourceBadge } from '@/components/ui/SourceBadge'
 import { stripHtml, relativeTime } from '@/lib/utils'
-import { getCourseColor } from '@/lib/courseColors'
 
 type UserAssignment = {
   id: string
@@ -110,7 +109,6 @@ export function CoursesClient({ courses }: { courses: Course[] }) {
   }
 
   const selectedCourse = courses.find(c => c.id === selectedId) ?? courses[0]
-  const courseColor = getCourseColor(selectedCourse.courseCode)
   const courseAssignments = selectedCourse.assignments
   const courseAnnouncements = selectedCourse.announcements
   const courseEdThreads = selectedCourse.edThreads
@@ -204,10 +202,7 @@ export function CoursesClient({ courses }: { courses: Course[] }) {
                 {selectedCourse.courseCode}
               </h1>
             </Link>
-            <span
-              className="px-2.5 py-1 rounded text-xs font-medium"
-              style={{ backgroundColor: `${courseColor}20`, color: courseColor }}
-            >
+            <span className="px-2.5 py-1 rounded text-xs font-medium bg-[#1F1F1F] text-[#A3A3A3]">
               {selectedCourse.term ?? ''}
             </span>
             {selectedCourse.websiteUrl && (

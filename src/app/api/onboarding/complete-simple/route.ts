@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { triggerPipelineSync } from '@/lib/sync';
 
 export async function POST() {
   const session = await auth();
@@ -15,18 +16,7 @@ export async function POST() {
     });
 
     // Trigger a sync for calendar (Google account is already connected at this point)
-    const pipelineUrl = process.env.PIPELINE_INTERNAL_URL;
-    if (pipelineUrl) {
-      fetch(`${pipelineUrl}/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-pipeline-secret': process.env.PIPELINE_SECRET!,
-        },
-        body: JSON.stringify({ userId: session.user.id }),
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => {});
-    }
+    triggerPipelineSync(session.user.id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

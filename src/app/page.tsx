@@ -24,6 +24,7 @@ import {
   hasCanvasToken,
   hasEdToken,
   hasGradescopeToken,
+  getGradescopeSyncError,
 } from '@/lib/data';
 
 export default async function Dashboard() {
@@ -44,6 +45,7 @@ export default async function Dashboard() {
     canvasConnected,
     edConnected,
     gradescopeConnected,
+    gradescopeSyncError,
   ] = await Promise.all([
     getUpcomingAssignments(user.id),
     getMissingAssignments(user.id),
@@ -58,6 +60,7 @@ export default async function Dashboard() {
     hasCanvasToken(user.id),
     hasEdToken(user.id),
     hasGradescopeToken(user.id),
+    getGradescopeSyncError(user.id),
   ]);
 
   // Use Pacific time (Berkeley) so the date/greeting are correct on Vercel (UTC)
@@ -143,6 +146,18 @@ export default async function Dashboard() {
             subtitle="recent"
           />
         </div>
+
+        {gradescopeSyncError && (
+          <div className="mb-4 flex items-center gap-3 bg-[#111111] border border-amber-500/30 rounded-md p-3">
+            <span className="text-amber-500 text-sm">!</span>
+            <p className="text-xs text-[#A3A3A3]">
+              Gradescope sync failed — your grades may be outdated.{' '}
+              <a href="/settings" className="text-amber-400 hover:text-amber-300 underline">
+                Update credentials &rarr;
+              </a>
+            </p>
+          </div>
+        )}
 
         {!canvasConnected && (
           <div className="mb-6 flex items-start gap-3 bg-[#111111] border border-amber-500/30 rounded-md p-4">

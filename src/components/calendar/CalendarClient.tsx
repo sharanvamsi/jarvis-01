@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useCallback, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Calendar, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { getCourseColor } from '@/lib/courseColors'
@@ -33,6 +33,7 @@ type CalendarClientProps = {
   assignments: Assignment[]
   userId: string
   calendarConnected: boolean
+  initialEvents?: CalendarEvent[]
 }
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -73,18 +74,38 @@ function formatTime(d: Date): string {
   return m === 0 ? `${hour} ${ampm}` : `${hour}:${m.toString().padStart(2, '0')} ${ampm}`
 }
 
-export function CalendarClient({ assignments, userId, calendarConnected }: CalendarClientProps) {
+export function CalendarClient({ assignments, userId, calendarConnected, initialEvents }: CalendarClientProps) {
+  const [eventsCache, setEventsCache] = useState<Map<number, CalendarEvent[]>>(
+    () => new Map(initialEvents ? [[0, initialEvents]] : [])
+  )
   const [weekOffset, setWeekOffset] = useState(0)
-  const [events, setEvents] = useState<CalendarEvent[]>([])
+  const [isLoadingWeek, setIsLoadingWeek] = useState(false)
+  const hasFetchedRef = useRef(new Set<number>(initialEvents && initialEvents.length > 0 ? [0] : []))
   const now = new Date()
 
-  // Fetch calendar events for the current week
-  useEffect(() => {
-    fetch(`/api/calendar/events?weekOffset=${weekOffset}`)
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: CalendarEvent[]) => setEvents(data))
-      .catch(() => setEvents([]))
-  }, [weekOffset])
+  const currentEvents = eventsCache.get(weekOffset) ?? []
+
+  const handleWeekChange = useCallback(async (newOffset: number) => {
+    setWeekOffset(newOffset)
+
+    if (hasFetchedRef.current.has(newOffset)) return
+    hasFetchedRef.current.add(newOffset)
+    setIsLoadingWeek(true)
+
+    try {
+      const res = await fetch(`/api/calendar/events?weekOffset=${newOffset}`)
+      if (res.ok) {
+        const data = await res.json()
+        setEventsCache(prev => new Map(prev).set(newOffset, data))
+      } else {
+        hasFetchedRef.current.delete(newOffset)
+      }
+    } catch {
+      hasFetchedRef.current.delete(newOffset)
+    } finally {
+      setIsLoadingWeek(false)
+    }
+  }, [])
 
   const parsedAssignments = useMemo(
     () =>
@@ -115,7 +136,7 @@ export function CalendarClient({ assignments, userId, calendarConnected }: Calen
   }
 
   function eventsForDay(date: Date) {
-    return events.filter((e) => isSameDay(new Date(e.startTime), date))
+    return currentEvents.filter((e) => isSameDay(new Date(e.startTime), date))
   }
 
   const weekLabel = `${weekDates[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekDates[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
@@ -148,20 +169,20 @@ export function CalendarClient({ assignments, userId, calendarConnected }: Calen
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setWeekOffset((w) => w - 1)}
+              onClick={() => handleWeekChange(weekOffset - 1)}
               className="p-1.5 rounded hover:bg-[#161616] text-[#A3A3A3] hover:text-[#F5F5F5] transition-colors"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
             <button
-              onClick={() => setWeekOffset((w) => w + 1)}
+              onClick={() => handleWeekChange(weekOffset + 1)}
               className="p-1.5 rounded hover:bg-[#161616] text-[#A3A3A3] hover:text-[#F5F5F5] transition-colors"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
             {weekOffset !== 0 && (
               <button
-                onClick={() => setWeekOffset(0)}
+                onClick={() => handleWeekChange(0)}
                 className="px-3 py-1 rounded text-xs font-medium text-[#3B82F6] hover:bg-[#161616] transition-colors"
               >
                 Today
