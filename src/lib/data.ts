@@ -784,13 +784,14 @@ export async function confirmSyllabus(syllabusId: string, userId: string) {
 export async function upsertExamStatManual(
   assignmentId: string,
   mean: number,
-  stdDev: number
+  stdDev: number,
+  userId: string
 ) {
   try {
     return await db.examStat.upsert({
       where: { assignmentId_source: { assignmentId, source: 'manual' } },
-      create: { assignmentId, mean, stdDev, source: 'manual' },
-      update: { mean, stdDev },
+      create: { assignmentId, mean, stdDev, source: 'manual', userId },
+      update: { mean, stdDev, userId },
     })
   } catch (error) {
     console.error('[data] upsertExamStatManual error:', error)

@@ -28,6 +28,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Not enrolled in this course' }, { status: 403 })
   }
 
-  const result = await upsertExamStatManual(assignmentId, mean, stdDev)
+  const result = await upsertExamStatManual(assignmentId, mean, stdDev, session.user.id)
   return NextResponse.json({ ok: !!result })
 }

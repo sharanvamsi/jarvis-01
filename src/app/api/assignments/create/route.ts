@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
           pointsPossible: pointsPossible ?? null,
           dueDate: dueDate ? new Date(dueDate) : null,
           source: 'manual',
+          createdByUserId: session.user!.id!,
           isCurrentSemester: true,
           submissionTypes: [],
         },

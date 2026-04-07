@@ -39,10 +39,22 @@ export async function DELETE(req: NextRequest) {
         },
       });
 
+      // Delete manual exam stats entered by this user (shared Assignment table,
+      // no cascade from User — must be cleaned up explicitly)
+      await tx.examStat.deleteMany({ where: { userId, source: 'manual' } });
+
+      // Delete manual assignments created by this user. These live in the shared
+      // Assignment table, but onDelete: SetNull only nulls createdByUserId; the
+      // rows must be removed so orphaned assignment data doesn't linger.
+      // Cascades from Assignment will clean up their UserAssignment / ExamStat /
+      // AssignmentGroupMapping / AssignmentOverride children automatically.
+      await tx.assignment.deleteMany({ where: { createdByUserId: userId, source: 'manual' } });
+
       // Delete SyncMetadata (no cascade relation to User)
       await tx.syncMetadata.deleteMany({ where: { userId } });
 
-      // Delete User — cascades all 19 related tables
+      // Delete User — cascades all related tables (UserAssignment, Enrollment,
+      // AssignmentOverride, CalendarEvent, SyncToken, SyncLog, raw tables, etc.)
       await tx.user.delete({ where: { id: userId } });
     });
 
