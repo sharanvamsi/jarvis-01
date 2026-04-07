@@ -338,11 +338,13 @@ export default async function Dashboard() {
                         {new Date(c.startTime).toLocaleTimeString([], {
                           hour: 'numeric',
                           minute: '2-digit',
+                          timeZone: 'America/Los_Angeles',
                         })}{' '}
                         &mdash;{' '}
                         {new Date(c.endTime).toLocaleTimeString([], {
                           hour: 'numeric',
                           minute: '2-digit',
+                          timeZone: 'America/Los_Angeles',
                         })}
                       </div>
                       {c.location && <div className="text-[#525252] text-xs mt-0.5">{c.location}</div>}
