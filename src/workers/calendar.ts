@@ -210,10 +210,10 @@ export async function runCalendarSync(userId: string): Promise<void> {
 
       const isAllDay = !!event.start.date && !event.start.dateTime;
       const startTime = isAllDay
-        ? new Date(event.start.date + 'T00:00:00')
+        ? new Date(event.start.date + 'T12:00:00Z')
         : new Date(event.start.dateTime!);
       const endTime = isAllDay
-        ? new Date(event.end.date + 'T23:59:59')
+        ? new Date(event.end.date + 'T12:00:00Z')
         : new Date(event.end.dateTime!);
 
       const classEvent = isClassEvent(event, courseCodes);
@@ -230,12 +230,6 @@ export async function runCalendarSync(userId: string): Promise<void> {
 
       const title = event.summary ?? 'Untitled';
       const location = event.location ?? null;
-
-      txOps.push(db.rawCalendarEvent.upsert({
-        where: { userId_googleEventId: { userId, googleEventId: event.id } },
-        update: { title, startTime, endTime, location, isAllDay, syncedAt: new Date(), rawJson: event as object },
-        create: { userId, googleEventId: event.id, title, startTime, endTime, location, isAllDay, rawJson: event as object },
-      }));
 
       txOps.push(db.calendarEvent.upsert({
         where: { userId_googleEventId: { userId, googleEventId: event.id } },
