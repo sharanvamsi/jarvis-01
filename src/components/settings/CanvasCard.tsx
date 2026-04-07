@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Check, X, ChevronDown, ChevronUp, RefreshCw, Loader2 } from 'lucide-react';
 import StatusDot from './StatusDot';
 import { type SaveStatus, formatLastSync } from './types';
+import CourseSelectionList, { type CourseCandidate } from './CourseSelectionList';
 
 type CanvasStatus = {
   connected: boolean;
@@ -33,6 +34,11 @@ export default function CanvasCard() {
   const [elapsedSyncSeconds, setElapsedSyncSeconds] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [showCourseSelection, setShowCourseSelection] = useState(false);
+  const [candidates, setCandidates] = useState<CourseCandidate[]>([]);
+  const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
+  const [confirmingCourses, setConfirmingCourses] = useState(false);
+  const [courseSelectionDone, setCourseSelectionDone] = useState(false);
 
   const fetchStatus = useCallback(() => {
     fetch('/api/tokens/canvas/status')
@@ -62,6 +68,8 @@ export default function CanvasCard() {
     setSyncState('syncing');
     setSyncError(null);
     setElapsedSyncSeconds(0);
+    setShowCourseSelection(false);
+    setCourseSelectionDone(false);
     if (elapsedRef.current) clearInterval(elapsedRef.current);
     elapsedRef.current = setInterval(() => setElapsedSyncSeconds(s => s + 1), 1000);
 
@@ -93,6 +101,23 @@ export default function CanvasCard() {
           if (elapsedRef.current) clearInterval(elapsedRef.current);
           setSyncState('done');
           fetchStatus();
+
+          // Check if this is a first-time connection (no courses selected yet)
+          try {
+            const cRes = await fetch('/api/courses/candidates');
+            if (cRes.ok) {
+              const cData = await cRes.json();
+              const courseCandidates: CourseCandidate[] = cData.courses ?? [];
+              const hasAnySelected = courseCandidates.some((c) => c.selected === true);
+              if (!hasAnySelected && courseCandidates.length > 0) {
+                setCandidates(courseCandidates);
+                setSelectedCourseIds(courseCandidates.map((c) => c.canvasId));
+                setShowCourseSelection(true);
+                return; // defer router.refresh() until after course selection
+              }
+            }
+          } catch { /* ignore — fall through to router.refresh() */ }
+
           router.refresh();
         } else if (canvasStatus === 'failed') {
           clearInterval(pollRef.current!);
@@ -110,6 +135,25 @@ export default function CanvasCard() {
         // Network error — keep polling
       }
     }, 3000);
+  }
+
+  async function handleConfirmCourses() {
+    if (selectedCourseIds.length === 0) return;
+    setConfirmingCourses(true);
+    try {
+      const res = await fetch('/api/courses/selections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedCanvasIds: selectedCourseIds }),
+      });
+      if (res.ok) {
+        setShowCourseSelection(false);
+        setCourseSelectionDone(true);
+        router.refresh();
+      }
+    } catch { /* ignore */ } finally {
+      setConfirmingCourses(false);
+    }
   }
 
   async function handleSave() {
@@ -152,6 +196,8 @@ export default function CanvasCard() {
       expiresInDays: null, syncStatus: null, syncError: null, recordsFetched: 0,
     });
     setSyncState('idle');
+    setShowCourseSelection(false);
+    setCourseSelectionDone(false);
   }
 
   if (loading) {
@@ -224,12 +270,19 @@ export default function CanvasCard() {
         <div className="flex items-center gap-2 mt-3 text-xs text-[#A3A3A3]">
           <div className="w-3 h-3 rounded-full border border-blue-500 border-t-transparent animate-spin shrink-0" />
           <span>{getSyncMessage(elapsedSyncSeconds)}</span>
+          <span className="text-[#525252]">({elapsedSyncSeconds}s)</span>
         </div>
       )}
-      {syncState === 'done' && (
+      {syncState === 'done' && !showCourseSelection && !courseSelectionDone && (
         <div className="flex items-center gap-2 mt-3 text-xs text-emerald-500">
           <Check className="w-3 h-3" />
           <span>Sync complete — your data is now up to date</span>
+        </div>
+      )}
+      {courseSelectionDone && (
+        <div className="flex items-center gap-2 mt-3 text-xs text-emerald-500">
+          <Check className="w-3 h-3" />
+          <span>Courses saved — dashboard is ready</span>
         </div>
       )}
       {syncState === 'error' && (
@@ -249,6 +302,29 @@ export default function CanvasCard() {
     </>
   );
 
+  const courseSelectionPrompt = showCourseSelection ? (
+    <div className="mt-4 border border-blue-500/20 rounded-md p-4 bg-[#0A0A0A]">
+      <p className="text-sm text-[#F5F5F5] font-medium mb-1">Select your courses</p>
+      <p className="text-xs text-[#A3A3A3] mb-3">
+        Choose which courses to sync to your dashboard.
+      </p>
+      <CourseSelectionList
+        courses={candidates}
+        selectedIds={selectedCourseIds}
+        onChange={setSelectedCourseIds}
+      />
+      <button
+        onClick={handleConfirmCourses}
+        disabled={selectedCourseIds.length === 0 || confirmingCourses}
+        className="mt-3 bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-2 rounded disabled:bg-[#1F1F1F] disabled:text-[#525252] transition-colors"
+      >
+        {confirmingCourses
+          ? 'Saving...'
+          : `Confirm ${selectedCourseIds.length} Course${selectedCourseIds.length !== 1 ? 's' : ''}`}
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div id="canvas-card" className={`bg-[#111111] border rounded-md p-5 mb-4 ${
       !status.connected ? 'border-blue-500/30 border-l-2 border-l-blue-500' : 'border-[#1F1F1F]'
@@ -263,7 +339,9 @@ export default function CanvasCard() {
           )}
         </div>
         {status.connected && (
-          <span className="text-[#525252] text-xs">{formatLastSync(status.lastSync)}</span>
+          <span className="text-[#525252] text-xs">
+            {syncState === 'syncing' ? 'Syncing...' : formatLastSync(status.lastSync)}
+          </span>
         )}
       </div>
       <p className="text-[#525252] text-xs mb-4">Assignments, grades, and announcements from bCourses</p>
@@ -340,6 +418,7 @@ export default function CanvasCard() {
           </div>
 
           {syncFeedback}
+          {courseSelectionPrompt}
 
           {showUpdate && (
             <div className="pt-2">
