@@ -3,6 +3,26 @@ import { db } from "./db"
 import { auth } from "./auth"
 import { redirect } from "next/navigation"
 
+// ── TIMEZONE HELPER ──────────────────────────────────────────
+// Vercel runs in UTC; Berkeley is America/Los_Angeles.
+// All "today" calculations must use Pacific time.
+const BERKELEY_TZ = 'America/Los_Angeles'
+
+function getPacificDayRange(date: Date) {
+  // Get today's date in Pacific as YYYY-MM-DD
+  const pacificDate = date.toLocaleDateString('en-CA', { timeZone: BERKELEY_TZ })
+  // Determine the UTC offset for Pacific on this date (handles DST)
+  const noonUtc = new Date(`${pacificDate}T12:00:00Z`)
+  const pacificHour = parseInt(
+    noonUtc.toLocaleString('en-US', { timeZone: BERKELEY_TZ, hour: 'numeric', hour12: false })
+  )
+  const utcOffsetHours = -(pacificHour - 12) // 7 (PDT) or 8 (PST)
+  // Midnight Pacific = utcOffsetHours:00 UTC
+  const startOfDay = new Date(`${pacificDate}T${String(utcOffsetHours).padStart(2, '0')}:00:00Z`)
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000)
+  return { startOfDay, endOfDay }
+}
+
 // ── CACHED HELPERS (deduped within a single render) ──────────
 // Shared enrollment filter: respect userSelected if any exist, else fall back to isCurrentSemester
 async function getUserCourseWhere(userId: string) {
@@ -258,9 +278,9 @@ export const getEdThreads = cache(async (userId: string, threadType?: 'announcem
 // ── CALENDAR ───────────────────────────────────────────────────
 export const getTodaysEvents = cache(async (userId: string) => {
   try {
+    // Use Pacific time so "today" matches Berkeley, not UTC
     const now = new Date()
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000)
+    const { startOfDay, endOfDay } = getPacificDayRange(now)
 
     return await db.calendarEvent.findMany({
       where: {
@@ -286,13 +306,13 @@ export const hasCalendarEvents = cache(async (userId: string): Promise<boolean> 
 
 export const getWeekCalendarEvents = cache(async (userId: string, weekOffset = 0) => {
   try {
+    // Use Pacific time for week boundaries
     const now = new Date()
-    const day = now.getDay()
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1) + weekOffset * 7
-    const monday = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0, 0)
-    const sunday = new Date(monday)
-    sunday.setDate(monday.getDate() + 6)
-    sunday.setHours(23, 59, 59, 999)
+    const { startOfDay: todayStart } = getPacificDayRange(now)
+    const pacificDay = todayStart.getDay()
+    const mondayOffset = pacificDay === 0 ? -6 : 1 - pacificDay
+    const monday = new Date(todayStart.getTime() + (mondayOffset + weekOffset * 7) * 24 * 60 * 60 * 1000)
+    const sunday = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000 - 1)
 
     return await db.calendarEvent.findMany({
       where: {
@@ -815,7 +835,8 @@ export const hasGradescopeToken = cache(async (userId: string): Promise<boolean>
 export const getTodaysOfficeHours = cache(async (userId: string) => {
   try {
     const courseIds = await getEnrollmentCourseIds(userId)
-    const todayDow = new Date().getDay() // 0=Sun...6=Sat
+    const { startOfDay: todayPacific } = getPacificDayRange(new Date())
+    const todayDow = todayPacific.getUTCDay() // day of week for the Pacific date
     return await db.officeHour.findMany({
       where: {
         courseId: { in: courseIds },

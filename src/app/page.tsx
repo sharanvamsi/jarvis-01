@@ -1,3 +1,5 @@
+export const revalidate = 30;
+
 import { ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { StatCard } from '@/components/dashboard/StatCard';
@@ -20,6 +22,8 @@ import {
   getTodaysOfficeHours,
   getUpcomingExams,
   hasCanvasToken,
+  hasEdToken,
+  hasGradescopeToken,
 } from '@/lib/data';
 
 export default async function Dashboard() {
@@ -38,6 +42,8 @@ export default async function Dashboard() {
     todaysOfficeHours,
     upcomingExams,
     canvasConnected,
+    edConnected,
+    gradescopeConnected,
   ] = await Promise.all([
     getUpcomingAssignments(user.id),
     getMissingAssignments(user.id),
@@ -50,16 +56,24 @@ export default async function Dashboard() {
     getTodaysOfficeHours(user.id),
     getUpcomingExams(user.id),
     hasCanvasToken(user.id),
+    hasEdToken(user.id),
+    hasGradescopeToken(user.id),
   ]);
 
+  // Use Pacific time (Berkeley) so the date/greeting are correct on Vercel (UTC)
+  const TZ = 'America/Los_Angeles';
   const now = new Date();
+  const pacificHour = parseInt(
+    now.toLocaleString('en-US', { timeZone: TZ, hour: 'numeric', hour12: false })
+  );
   const greeting =
-    now.getHours() < 12
+    pacificHour < 12
       ? 'Good morning'
-      : now.getHours() < 18
+      : pacificHour < 18
         ? 'Good afternoon'
         : 'Good evening';
   const dateStr = now.toLocaleDateString('en-US', {
+    timeZone: TZ,
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -131,20 +145,23 @@ export default async function Dashboard() {
         </div>
 
         {!canvasConnected && (
-          <div className="mb-6 flex items-start gap-3 bg-[#111111] border border-blue-500/30 rounded-md p-4">
-            <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center shrink-0">
-              <span className="text-white text-sm font-bold">J</span>
+          <div className="mb-6 flex items-start gap-3 bg-[#111111] border border-amber-500/30 rounded-md p-4">
+            <div className="w-8 h-8 rounded bg-amber-600/20 flex items-center justify-center shrink-0">
+              <span className="text-amber-500 text-sm">!</span>
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium text-[#F5F5F5]">
-                Welcome to Jarvis &mdash; let&apos;s get your data connected
+                Connect Canvas to unlock your full dashboard
               </p>
               <p className="text-xs text-[#A3A3A3] mt-0.5">
-                Connect Canvas to see your assignments, grades, and upcoming deadlines.
+                Canvas provides your course list, assignments, and grades.
+                {edConnected || gradescopeConnected
+                  ? ' Your other integrations are ready and will sync automatically once Canvas is connected.'
+                  : ''}
               </p>
               <Link
                 href="/settings"
-                className="inline-flex items-center gap-1.5 mt-2 text-xs text-blue-400 hover:text-blue-300"
+                className="inline-flex items-center gap-1.5 mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
               >
                 Connect Canvas &rarr;
               </Link>
