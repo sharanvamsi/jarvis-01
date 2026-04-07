@@ -34,8 +34,19 @@ export async function GET() {
     enrollments.map((e) => [e.course.canvasId, e.userSelected])
   )
 
+  // Only show courses from the current semester (SP26) — past courses
+  // can't be synced because Canvas won't serve data for concluded courses
+  const CURRENT_TERMS = ['SP26']
+
   const courses = rawCourses
-    .filter((c) => c.name && !isNonAcademicCourse(c.name, c.courseCode ?? ''))
+    .filter((c) => {
+      if (!c.name) return false
+      if (isNonAcademicCourse(c.name, c.courseCode ?? '')) return false
+      // Must be a current semester course
+      const term = c.term ?? 'UNKNOWN'
+      if (!CURRENT_TERMS.includes(term)) return false
+      return true
+    })
     .map((c) => ({
       canvasId: c.canvasCourseId,
       courseCode: normalizeCourseCode(c.courseCode ?? c.name ?? ''),

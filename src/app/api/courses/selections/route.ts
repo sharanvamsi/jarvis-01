@@ -29,13 +29,13 @@ export async function POST(req: NextRequest) {
 
   const userId = session.user.id
 
+  const CURRENT_TERMS = ['SP26']
+
   await db.$transaction(async (tx) => {
-    // For each selected canvasId, ensure a Course record exists
     for (const canvasId of selectedCanvasIds) {
       let course = await tx.course.findFirst({ where: { canvasId } })
 
       if (!course) {
-        // Course record doesn't exist — create it from RawCanvasCourse
         const raw = await tx.rawCanvasCourse.findUnique({
           where: { userId_canvasCourseId: { userId, canvasCourseId: canvasId } },
         })
@@ -43,6 +43,9 @@ export async function POST(req: NextRequest) {
 
         const courseCode = normalizeCourseCode(raw.courseCode ?? raw.name)
         const term = raw.term ?? extractSemester(raw.name, raw.courseCode ?? '')
+
+        // Only allow current semester courses
+        if (!CURRENT_TERMS.includes(term)) continue
 
         course = await tx.course.upsert({
           where: { courseCode_term: { courseCode, term } },
@@ -52,15 +55,15 @@ export async function POST(req: NextRequest) {
             term,
             canvasId,
             enrollmentState: raw.enrollmentState ?? 'active',
-            isCurrentSemester: raw.isCurrent,
+            isCurrentSemester: true,
           },
-          update: {
-            canvasId,
-          },
+          update: { canvasId },
         })
+      } else if (course.term && !CURRENT_TERMS.includes(course.term)) {
+        // Existing course but not current semester — skip
+        continue
       }
 
-      // Mark enrollment as selected
       await tx.enrollment.upsert({
         where: { userId_courseId: { userId, courseId: course.id } },
         create: {
@@ -69,9 +72,7 @@ export async function POST(req: NextRequest) {
           role: 'student',
           userSelected: true,
         },
-        update: {
-          userSelected: true,
-        },
+        update: { userSelected: true },
       })
     }
 
