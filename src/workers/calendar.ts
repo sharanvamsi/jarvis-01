@@ -202,6 +202,9 @@ export async function runCalendarSync(userId: string): Promise<void> {
       .map((c) => c.courseCode)
       .filter((code): code is string => code != null);
 
+    // Batch all DB writes into a single transaction instead of 3 calls per event
+    const txOps: any[] = [];
+
     for (const event of events) {
       if (event.status === 'cancelled') continue;
 
@@ -218,7 +221,6 @@ export async function runCalendarSync(userId: string): Promise<void> {
         ? detectCourseCode(event, courses)
         : null;
 
-      // Berkeley Time = +10 minutes from official start
       const berkeleyStart = classEvent
         ? new Date(startTime.getTime() + 10 * 60 * 1000)
         : null;
@@ -226,80 +228,28 @@ export async function runCalendarSync(userId: string): Promise<void> {
         ? new Date(endTime.getTime() + 10 * 60 * 1000)
         : null;
 
-      // Upsert RawCalendarEvent
-      await db.rawCalendarEvent.upsert({
-        where: {
-          userId_googleEventId: {
-            userId,
-            googleEventId: event.id,
-          },
-        },
-        update: {
-          title: event.summary ?? 'Untitled',
-          startTime,
-          endTime,
-          location: event.location ?? null,
-          isAllDay,
-          syncedAt: new Date(),
-          rawJson: event as object,
-        },
-        create: {
-          userId,
-          googleEventId: event.id,
-          title: event.summary ?? 'Untitled',
-          startTime,
-          endTime,
-          location: event.location ?? null,
-          isAllDay,
-          rawJson: event as object,
-        },
-      });
+      const title = event.summary ?? 'Untitled';
+      const location = event.location ?? null;
 
-      // Upsert CalendarEvent (unified)
-      const existing = await db.calendarEvent.findUnique({
-        where: {
-          userId_googleEventId: {
-            userId,
-            googleEventId: event.id,
-          },
-        },
-      });
+      txOps.push(db.rawCalendarEvent.upsert({
+        where: { userId_googleEventId: { userId, googleEventId: event.id } },
+        update: { title, startTime, endTime, location, isAllDay, syncedAt: new Date(), rawJson: event as object },
+        create: { userId, googleEventId: event.id, title, startTime, endTime, location, isAllDay, rawJson: event as object },
+      }));
 
-      if (existing) {
-        await db.calendarEvent.update({
-          where: { id: existing.id },
-          data: {
-            title: event.summary ?? 'Untitled',
-            startTime,
-            endTime,
-            location: event.location ?? null,
-            isAllDay,
-            isClassEvent: classEvent,
-            courseCode: linkedCourseCode,
-            berkeleyStart,
-            berkeleyEnd,
-          },
-        });
-        recordsUpdated++;
-      } else {
-        await db.calendarEvent.create({
-          data: {
-            userId,
-            googleEventId: event.id,
-            title: event.summary ?? 'Untitled',
-            startTime,
-            endTime,
-            location: event.location ?? null,
-            isAllDay,
-            isClassEvent: classEvent,
-            courseCode: linkedCourseCode,
-            berkeleyStart,
-            berkeleyEnd,
-          },
-        });
-        recordsCreated++;
-      }
+      txOps.push(db.calendarEvent.upsert({
+        where: { userId_googleEventId: { userId, googleEventId: event.id } },
+        update: { title, startTime, endTime, location, isAllDay, isClassEvent: classEvent, courseCode: linkedCourseCode, berkeleyStart, berkeleyEnd },
+        create: { userId, googleEventId: event.id, title, startTime, endTime, location, isAllDay, isClassEvent: classEvent, courseCode: linkedCourseCode, berkeleyStart, berkeleyEnd },
+      }));
+
+      recordsCreated++;
     }
+
+    if (txOps.length > 0) {
+      await db.$transaction(txOps);
+    }
+    console.log(`[calendar] Wrote ${txOps.length} ops in single transaction`);
 
     await db.syncLog.update({
       where: { id: syncLog.id },
