@@ -297,8 +297,13 @@ export const getTodaysEvents = cache(async (userId: string) => {
 
 export const hasCalendarEvents = cache(async (userId: string): Promise<boolean> => {
   try {
-    const count = await db.calendarEvent.count({ where: { userId }, take: 1 })
-    return count > 0
+    // Check if Google account is connected (OAuth), not just if events exist.
+    // Events may not exist yet if the pipeline sync hasn't run.
+    const account = await db.account.findFirst({
+      where: { userId, provider: 'google' },
+      select: { id: true },
+    })
+    return !!account
   } catch {
     return false
   }
