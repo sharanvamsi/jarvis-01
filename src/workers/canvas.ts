@@ -192,7 +192,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
     let courses: CanvasCourseData[];
     try {
       courses = await fetchPaginated<CanvasCourseData>(
-        `${BASE_URL}/courses?enrollment_state=active&include[]=enrollments&include[]=term&per_page=100`,
+        `${BASE_URL}/courses?enrollment_state=active&include[]=enrollments&include[]=term&include[]=teachers&per_page=100`,
         token
       );
       recordsFetched += courses.length;
@@ -203,13 +203,6 @@ export async function runCanvasSync(userId: string): Promise<void> {
     }
 
     console.log(`[canvas] Fetched ${courses.length} courses in ${Date.now() - syncStart}ms`);
-
-    // Step 4: Write API snapshot
-    await db.rawApiSnapshot.upsert({
-      where: { userId_service: { userId, service: 'canvas' } },
-      create: { userId, service: 'canvas', rawJson: courses as any },
-      update: { rawJson: courses as any, syncedAt: new Date() },
-    });
 
     // Step 5: Process courses
     const currentCourseIds: string[] = [];
@@ -273,6 +266,30 @@ export async function runCanvasSync(userId: string): Promise<void> {
         create: { userId, courseId: upsertedCourse.id, role: 'student' },
         update: {},
       });
+
+      // Populate CourseStaff from Canvas teachers array so BT worker
+      // can discover instructors even before the website scraper runs
+      const teachers = (course as any).teachers as { display_name?: string }[] | undefined;
+      if (teachers?.length) {
+        for (const teacher of teachers) {
+          if (!teacher.display_name) continue;
+          await db.courseStaff.upsert({
+            where: {
+              courseId_name_role: {
+                courseId: upsertedCourse.id,
+                name: teacher.display_name,
+                role: 'Instructor',
+              },
+            },
+            create: {
+              courseId: upsertedCourse.id,
+              name: teacher.display_name,
+              role: 'Instructor',
+            },
+            update: {}, // don't overwrite if website scraper already has richer data
+          });
+        }
+      }
 
       if (isCurrent) currentCourseIds.push(canvasCourseId);
       recordsCreated++;
@@ -361,55 +378,6 @@ export async function runCanvasSync(userId: string): Promise<void> {
           const dueDate = assignment.due_at ? new Date(assignment.due_at) : null;
           const submission = submissionMap.get(assignment.id) || null;
 
-          // Upsert RawCanvasAssignment
-          txOps.push(db.rawCanvasAssignment.upsert({
-            where: { userId_canvasAssignmentId: { userId, canvasAssignmentId } },
-            create: {
-              userId,
-              canvasAssignmentId,
-              canvasCourseId: courseId,
-              name: assignment.name,
-              dueDate,
-              pointsPossible: assignment.points_possible,
-              submissionTypes: assignment.submission_types || [],
-              htmlUrl: assignment.html_url,
-              rawJson: assignment as any,
-            },
-            update: {
-              name: assignment.name,
-              dueDate,
-              pointsPossible: assignment.points_possible,
-              submissionTypes: assignment.submission_types || [],
-              htmlUrl: assignment.html_url,
-              rawJson: assignment as any,
-              syncedAt: new Date(),
-            },
-          }));
-
-          // Upsert RawCanvasSubmission if exists
-          if (submission) {
-            txOps.push(db.rawCanvasSubmission.upsert({
-              where: { userId_canvasAssignmentId: { userId, canvasAssignmentId } },
-              create: {
-                userId,
-                canvasAssignmentId,
-                workflowState: submission.workflow_state,
-                score: submission.score,
-                grade: submission.grade,
-                submittedAt: submission.submitted_at ? new Date(submission.submitted_at) : null,
-                rawJson: submission as any,
-              },
-              update: {
-                workflowState: submission.workflow_state,
-                score: submission.score,
-                grade: submission.grade,
-                submittedAt: submission.submitted_at ? new Date(submission.submitted_at) : null,
-                rawJson: submission as any,
-                syncedAt: new Date(),
-              },
-            }));
-          }
-
           // Upsert unified Assignment + UserAssignment if we have a course record
           if (courseRecord) {
             const assignmentId = `canvas_${assignment.id}`;
@@ -460,27 +428,6 @@ export async function runCanvasSync(userId: string): Promise<void> {
         // Process announcements
         for (const ann of announcementsData) {
           const canvasAnnouncementId = String(ann.id);
-
-          txOps.push(db.rawCanvasAnnouncement.upsert({
-            where: { userId_canvasAnnouncementId: { userId, canvasAnnouncementId } },
-            create: {
-              userId,
-              canvasAnnouncementId,
-              canvasCourseId: courseId,
-              title: ann.title,
-              message: ann.message,
-              postedAt: ann.posted_at ? new Date(ann.posted_at) : null,
-              htmlUrl: ann.html_url,
-              rawJson: ann as any,
-            },
-            update: {
-              title: ann.title,
-              message: ann.message,
-              postedAt: ann.posted_at ? new Date(ann.posted_at) : null,
-              rawJson: ann as any,
-              syncedAt: new Date(),
-            },
-          }));
 
           if (courseRecord) {
             txOps.push(db.canvasAnnouncement.upsert({

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import cron from 'node-cron';
 import { createSyncWorker, syncQueue, connection } from './lib/queue';
 import { syncUser } from './jobs/syncUser';
 import { db } from './lib/db';
@@ -71,6 +72,71 @@ app.post('/sync', async (req, res) => {
 const PORT = process.env.PORT ?? 3001;
 app.listen(PORT, () => {
   console.log(`[pipeline] HTTP server listening on port ${PORT}`);
+});
+
+// ── Scheduled sync: every 30 minutes, all stale users ──────────
+cron.schedule('*/30 * * * *', async () => {
+  console.log('[Cron] Scheduled sync tick');
+  try {
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+    const users = await db.user.findMany({
+      where: {
+        syncTokens: { some: { service: 'canvas' } },
+        OR: [
+          { lastSyncAt: null },
+          { lastSyncAt: { lt: cutoff } },
+        ],
+      },
+      select: { id: true, lastSyncAt: true },
+      orderBy: [
+        { lastSyncAt: 'asc' },  // stalest users get priority
+        { id: 'asc' },           // stable tiebreaker
+      ],
+      take: 15,  // reduced from 50 — reasonable per 30-min tick
+    });
+
+    if (users.length === 0) {
+      console.log('[Cron] No stale users to sync');
+      return;
+    }
+
+    console.log(`[Cron] Enqueueing ${users.length} stale users`);
+
+    await Promise.all(
+      users.map(u =>
+        syncQueue.add('sync', { userId: u.id }, {
+          jobId: `cron-sync-${u.id}-${Date.now()}`,
+          removeOnComplete: true,
+          removeOnFail: false,
+        })
+      )
+    );
+  } catch (err) {
+    console.error('[Cron] Scheduled sync failed:', err);
+  }
+});
+
+// ── Stale syncLog cleanup: every 15 minutes ─────────────────────
+cron.schedule('*/15 * * * *', async () => {
+  try {
+    const staleThreshold = new Date(Date.now() - 30 * 60 * 1000);
+    const { count } = await db.syncLog.updateMany({
+      where: {
+        status: 'running',
+        startedAt: { lt: staleThreshold },
+      },
+      data: {
+        status: 'failed',
+        errorMessage: 'Sync timed out — process likely crashed',
+        completedAt: new Date(),
+      },
+    });
+    if (count > 0) {
+      console.log(`[Cleanup] Marked ${count} stale syncLog entries as failed`);
+    }
+  } catch (err) {
+    console.error('[Cleanup] SyncLog cleanup failed:', err);
+  }
 });
 
 // ── Graceful Shutdown ────────────────────────────────────────

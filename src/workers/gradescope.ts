@@ -260,6 +260,31 @@ export async function runGradescopeSync(userId: string): Promise<void> {
           `[gradescope] ${gsCourse.short_name}: ${assignments.length} assignments`,
         );
 
+        // Zero-assignment guard: if we previously had assignments and now see 0,
+        // something is wrong with scraping — skip this course to prevent data loss
+        const previousCount = await db.userAssignment.count({
+          where: {
+            userId,
+            assignment: { courseId: dbCourseId, source: 'gradescope' },
+          },
+        });
+
+        if (previousCount > 5 && assignments.length === 0) {
+          console.warn(
+            `[Gradescope] Zero-assignment guard triggered for course ${dbCourseId}. ` +
+            `Previously had ${previousCount}, got 0. Skipping write.`
+          );
+          await db.syncLog.update({
+            where: { id: syncLog.id },
+            data: {
+              status: 'partial',
+              errorMessage: `Gradescope returned 0 assignments for ${gsCourse.short_name} ` +
+                `(previously had ${previousCount}). Possible scraping failure. Skipping update.`,
+            },
+          });
+          continue;
+        }
+
         // Get existing unified assignments for matching
         const unifiedAssignments = await db.assignment.findMany({
           where: { courseId: dbCourseId },
@@ -488,8 +513,8 @@ export async function runGradescopeSync(userId: string): Promise<void> {
         );
       }
 
-      // Rate limit: 500ms between courses
-      await new Promise((r) => setTimeout(r, 500));
+      // Rate limit: 200ms between courses
+      await new Promise((r) => setTimeout(r, 200));
     }
 
     // Mark user as Gradescope connected

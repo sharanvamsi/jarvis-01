@@ -136,10 +136,31 @@ export async function extractSyllabus(
     text = fenceMatch[1].trim();
   }
 
+  let parsed: ExtractedSyllabus;
   try {
-    return JSON.parse(text) as ExtractedSyllabus;
+    parsed = JSON.parse(text) as ExtractedSyllabus;
   } catch {
     console.error('[syllabus] LLM returned invalid JSON:', text.slice(0, 200));
     throw new Error('Syllabus extraction failed — invalid JSON from LLM');
   }
+
+  // Weight sum guard: reject wildly off extractions
+  const totalWeight = parsed.componentGroups.reduce(
+    (sum, g) => sum + (g.weight ?? 0), 0
+  );
+
+  if (parsed.componentGroups.length > 0 && (totalWeight < 0.7 || totalWeight > 1.15)) {
+    console.warn(
+      `[Syllabus] Weight sum guard: got ${totalWeight.toFixed(3)} for ${courseCode}. ` +
+      `Expected 0.70–1.15. Discarding extraction.`
+    );
+    return {
+      ...parsed,
+      componentGroups: [],
+      gradeScale: null,
+      clobberPolicies: [],
+    };
+  }
+
+  return parsed;
 }

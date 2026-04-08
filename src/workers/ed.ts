@@ -240,46 +240,6 @@ export async function runEdSync(userId: string): Promise<void> {
           const answerCount =
             thread.answer_count ?? thread.answers?.length ?? 0;
 
-          // Write to RawEdThread (all threads)
-          await db.rawEdThread.upsert({
-            where: {
-              userId_edThreadId: { userId, edThreadId },
-            },
-            update: {
-              title: thread.title,
-              category: thread.category ?? null,
-              isAnnouncement: thread.is_announcement,
-              isPinned: thread.is_pinned,
-              contentPreview,
-              linkedAssignment,
-              answerCount,
-              voteCount: thread.vote_count,
-              isAnswered: thread.is_answered,
-              url: threadUrl,
-              syncedAt: new Date(),
-              rawJson: thread as any,
-            },
-            create: {
-              userId,
-              edThreadId,
-              edCourseId,
-              courseName: course.courseName,
-              title: thread.title,
-              category: thread.category ?? null,
-              isAnnouncement: thread.is_announcement,
-              isPinned: thread.is_pinned,
-              contentPreview,
-              linkedAssignment,
-              answerCount,
-              voteCount: thread.vote_count,
-              isAnswered: thread.is_answered,
-              url: threadUrl,
-              threadCreatedAt: new Date(thread.created_at),
-              rawJson: thread as any,
-              syncedAt: new Date(),
-            },
-          });
-
           // Write to unified EdThread if announcement or question
           if (threadType !== 'ignore') {
             const existing = await db.edThread.findUnique({

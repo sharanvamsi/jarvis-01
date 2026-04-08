@@ -21,5 +21,8 @@ export const syncQueue = new Queue(QUEUE_NAME, { connection });
 export function createSyncWorker(
   processor: (job: Job) => Promise<void>
 ): Worker {
-  return new Worker(QUEUE_NAME, processor, { connection });
+  return new Worker(QUEUE_NAME, processor, {
+    connection,
+    concurrency: 3, // process 3 users simultaneously — safe for Neon connection pool
+  });
 }

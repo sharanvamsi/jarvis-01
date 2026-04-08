@@ -152,8 +152,9 @@ export async function syncSyllabus(userId: string): Promise<void> {
       }
 
       // Create clobber policies
+      const createdPolicies = [];
       for (const policy of extracted.clobberPolicies) {
-        await tx.clobberPolicy.create({
+        const created = await tx.clobberPolicy.create({
           data: {
             syllabusId: syllabus.id,
             sourceName: policy.sourceName,
@@ -162,6 +163,35 @@ export async function syncSyllabus(userId: string): Promise<void> {
             conditionText: policy.conditionText,
           },
         });
+        createdPolicies.push(created);
+      }
+
+      // Resolve clobber policy name → FK references
+      const createdGroups = await tx.componentGroup.findMany({
+        where: { syllabusId: syllabus.id },
+        select: { id: true, name: true },
+      });
+
+      const groupByName = Object.fromEntries(
+        createdGroups.map(g => [g.name.toLowerCase().trim(), g.id])
+      );
+
+      for (const policy of createdPolicies) {
+        const sourceId = groupByName[policy.sourceName.toLowerCase().trim()];
+        const targetId = groupByName[policy.targetName.toLowerCase().trim()];
+
+        if (sourceId && targetId) {
+          await tx.clobberPolicy.update({
+            where: { id: policy.id },
+            data: { sourceGroupId: sourceId, targetGroupId: targetId },
+          });
+        } else {
+          console.warn(
+            `[Syllabus] Could not resolve clobber policy: ` +
+            `"${policy.sourceName}" → "${policy.targetName}" ` +
+            `(available: ${Object.keys(groupByName).join(', ')})`
+          );
+        }
       }
     });
 

@@ -154,9 +154,12 @@ async function fetchInstructorSnapshots(
       return parsed?.subject === subject && parsed?.courseNumber === courseNumber;
     });
 
-  if (!matchingCourse?.courseStaff?.length) return;
+  if (!matchingCourse?.courseStaff?.length) {
+    console.log(`[BT] No CourseStaff for ${subject} ${courseNumber} — skipping instructor snapshots`);
+    return;
+  }
 
-  const instructors = matchingCourse.courseStaff
+  let instructors = matchingCourse.courseStaff
     .filter(
       (s) =>
         s.role?.toLowerCase().includes("instructor") ||
@@ -165,7 +168,18 @@ async function fetchInstructorSnapshots(
     .map((s) => parseInstructorName(s.name))
     .filter((n): n is NonNullable<typeof n> => n !== null);
 
-  if (!instructors.length) return;
+  // Broader fallback: if no instructor/professor role match, try all staff
+  if (instructors.length === 0) {
+    console.log(`[BT] No instructor-role staff for ${subject} ${courseNumber} — trying all staff`);
+    instructors = matchingCourse.courseStaff
+      .map((s) => parseInstructorName(s.name))
+      .filter((n): n is NonNullable<typeof n> => n !== null);
+  }
+
+  if (!instructors.length) {
+    console.log(`[BT] No parseable instructor names for ${subject} ${courseNumber} — skipping`);
+    return;
+  }
 
   const specs = generateSemesterSpecs();
   // Only fetch instructor snapshots for last 6 semesters

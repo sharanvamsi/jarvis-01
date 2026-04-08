@@ -306,17 +306,6 @@ async function writeScrapedData(
     };
   });
 
-  // SYLLABUS WEEKS
-  const validWeeks = data.syllabus_weeks.filter(w => !!w.topic && !!w.week_num);
-
-  const syllabusRows = validWeeks.map(w => ({
-    courseId,
-    weekNum: w.week_num,
-    topic: w.topic,
-    startDate: w.start_date ? new Date(w.start_date) : null,
-    readings: w.readings,
-  }));
-
   // --- Atomic transaction: delete all then createMany ---
   await db.$transaction(async (tx: Prisma.TransactionClient) => {
     // Delete all existing data for this course/user
@@ -324,8 +313,6 @@ async function writeScrapedData(
     await tx.officeHour.deleteMany({ where: { courseId } });
     await tx.courseStaff.deleteMany({ where: { courseId } });
     await tx.exam.deleteMany({ where: { courseId } });
-    await tx.syllabusWeek.deleteMany({ where: { courseId } });
-
     // Bulk insert all new data
     if (assignmentRows.length > 0) {
       await tx.rawCourseWebsiteAssignment.createMany({ data: assignmentRows, skipDuplicates: true });
@@ -339,9 +326,6 @@ async function writeScrapedData(
     if (examRows.length > 0) {
       await tx.exam.createMany({ data: examRows });
     }
-    if (syllabusRows.length > 0) {
-      await tx.syllabusWeek.createMany({ data: syllabusRows, skipDuplicates: true });
-    }
   });
 
   return {
@@ -349,7 +333,7 @@ async function writeScrapedData(
     officeHours: officeHourRows.length,
     staff: staffRows.length,
     exams: examRows.length,
-    syllabusWeeks: syllabusRows.length,
+    syllabusWeeks: 0,
   };
 }
 
@@ -420,9 +404,9 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
     console.log(`[website] Processing ${code}: ${url}`);
 
     try {
-      // Check page hash for changes (unique on userId + courseId)
+      // Check page hash for changes (course-scoped)
       const existing = await db.rawCourseWebsitePageHash.findUnique({
-        where: { userId_courseId: { userId, courseId: course.id } },
+        where: { courseId: course.id },
       });
 
       if (existing?.lastChecked) {
@@ -442,7 +426,7 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
       if (existing?.contentHash === contentHash) {
         console.log(`[website] ${code}: content unchanged, skipping LLM`);
         await db.rawCourseWebsitePageHash.update({
-          where: { userId_courseId: { userId, courseId: course.id } },
+          where: { courseId: course.id },
           data: { lastChecked: now },
         });
         continue;
@@ -468,14 +452,13 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
 
       // Update page hash
       await db.rawCourseWebsitePageHash.upsert({
-        where: { userId_courseId: { userId, courseId: course.id } },
+        where: { courseId: course.id },
         update: {
           contentHash,
           lastChecked: now,
           lastChanged: now,
         },
         create: {
-          userId,
           courseId: course.id,
           contentHash,
           lastChecked: now,
@@ -491,7 +474,7 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
       );
 
       // Delay between courses
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 500));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[website] ${code} failed:`, msg);
