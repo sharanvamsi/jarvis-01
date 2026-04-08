@@ -4,7 +4,7 @@
 
 import { createHash } from 'crypto';
 import { db } from '../lib/db';
-import type { Prisma } from '../generated/prisma';
+import type { Prisma } from '@jarvis/db';
 import { filterByUserSelection } from '../lib/enrollment-filter';
 
 const THRESHOLD_HOURS = 24;

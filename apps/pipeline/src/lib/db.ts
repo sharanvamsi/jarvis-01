@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaClient } from '../generated/prisma';
+import { PrismaClient } from '@jarvis/db';
 
 // Fail fast on missing required env vars
 const requiredEnv = ['DATABASE_URL', 'ENCRYPTION_KEY'] as const;

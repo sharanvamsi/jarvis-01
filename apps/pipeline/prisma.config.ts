@@ -5,8 +5,8 @@ dotenv.config({ path: ".env" });
 
 export default defineConfig({
   earlyAccess: true,
-  schema: "prisma/schema.prisma",
+  schema: "../../packages/db/prisma/schema.prisma",
   migrations: {
-    path: "prisma/migrations",
+    path: "../../packages/db/prisma/migrations",
   },
 });

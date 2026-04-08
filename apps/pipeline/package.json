@@ -7,6 +7,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "sync:once": "tsx src/sync-once.ts"
   },
   "keywords": [],
@@ -15,7 +16,7 @@
   "type": "commonjs",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
-    "@prisma/client": "^6.19.3",
+    "@jarvis/db": "*",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node-cron": "^3.0.11",

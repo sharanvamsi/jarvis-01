@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../lib/db';
-import type { Prisma } from '../generated/prisma';
+import type { Prisma } from '@jarvis/db';
 import { decrypt } from '../lib/crypto';
 import { fetchCanvasSyllabus, fetchWebsiteSyllabus } from '../lib/syllabus-fetcher';
 import { extractSyllabus } from '../lib/syllabus-extractor';
