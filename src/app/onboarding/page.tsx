@@ -24,7 +24,6 @@ export default function Onboarding() {
   // Course selection state
   const [courses, setCourses] = useState<CourseCandidate[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [loadingCourses, setLoadingCourses] = useState(false);
   const [savingCourses, setSavingCourses] = useState(false);
 
   useEffect(() => {
@@ -52,7 +51,7 @@ export default function Onboarding() {
 
       // Token validated — courses returned
       const courseCandidates: CourseCandidate[] = (data.courses ?? []).map(
-        (c: any) => ({
+        (c: { canvasId: string; courseCode: string; courseName: string; term: string }) => ({
           canvasId: c.canvasId,
           courseCode: c.courseCode,
           courseName: c.courseName,
@@ -73,9 +72,10 @@ export default function Onboarding() {
   async function handleConfirmCourses() {
     if (selectedIds.length === 0) return;
     setSavingCourses(true);
+    setError(null);
     try {
       const selectedCourses = courses.filter(c => selectedIds.includes(c.canvasId));
-      await fetch('/api/onboarding/complete', {
+      const res = await fetch('/api/onboarding/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -87,10 +87,13 @@ export default function Onboarding() {
           })),
         }),
       });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error ?? 'Failed to save selected courses');
+      }
       setStep('done');
-    } catch {
-      // Proceed even on error — pipeline will handle it
-      setStep('done');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save selected courses');
     } finally {
       setSavingCourses(false);
     }
@@ -240,7 +243,7 @@ export default function Onboarding() {
                 Choose the courses you&apos;re taking this semester. We&apos;ll only sync data for these courses.
               </p>
 
-              {courses.length === 0 && !loadingCourses && (
+              {courses.length === 0 && (
                 <p className="text-[#525252] text-sm">No active courses found in Canvas.</p>
               )}
 
@@ -249,9 +252,16 @@ export default function Onboarding() {
                   <CourseSelectionList
                     courses={courses}
                     selectedIds={selectedIds}
-                    onChange={setSelectedIds}
+                    onChange={(ids) => {
+                      setSelectedIds(ids);
+                      setError(null);
+                    }}
                   />
                 </div>
+              )}
+
+              {error && (
+                <p className="text-red-400 text-xs mt-3">{error}</p>
               )}
 
               <button

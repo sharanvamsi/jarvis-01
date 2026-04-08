@@ -15,8 +15,9 @@ export async function POST() {
       data: { onboardingDone: true },
     });
 
-    // Trigger a sync for calendar (Google account is already connected at this point)
-    triggerPipelineSync(session.user.id);
+    // Wait for the trigger request so the sync reliably starts before the
+    // route handler finishes.
+    await triggerPipelineSync(session.user.id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

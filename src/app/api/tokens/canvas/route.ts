@@ -47,8 +47,9 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  // Fire-and-forget sync trigger so Canvas data appears immediately
-  triggerPipelineSync(session.user.id)
+  // Wait for the trigger request so the sync reliably starts before the
+  // route handler finishes.
+  await triggerPipelineSync(session.user.id)
 
   return NextResponse.json({ success: true })
 }

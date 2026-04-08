@@ -1,6 +1,6 @@
 /**
  * Shared helper to trigger a pipeline sync for a given user.
- * Fire-and-forget: resolves immediately; logs on failure.
+ * Best-effort: waits for the trigger request to finish, but never throws.
  */
 export async function triggerPipelineSync(userId: string): Promise<void> {
   const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
