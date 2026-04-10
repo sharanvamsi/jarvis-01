@@ -660,69 +660,30 @@ export async function extractCourseData(
   const INPUT_COST_PER_MTOK = 0.80;
   const OUTPUT_COST_PER_MTOK = 4.00;
 
-  for (const cfg of CATEGORIES) {
-    result.extraction_meta.categories_attempted.push(cfg.category);
+  // All 5 categories are independent — run them in parallel
+  result.extraction_meta.categories_attempted = CATEGORIES.map((c) => c.category);
 
-    const selectedPages = selectPages(pages, cfg.category);
-    const content = buildContent(selectedPages);
+  const categoryResults = await Promise.allSettled(
+    CATEGORIES.map(async (cfg) => {
+      const selectedPages = selectPages(pages, cfg.category);
+      const content = buildContent(selectedPages);
+      const system = base + '\n' + CATEGORY_ADDITIONS[cfg.category];
 
-    const system = base + '\n' + CATEGORY_ADDITIONS[cfg.category];
-
-    console.log(
-      `[extractor] ${cfg.category}: ${selectedPages.length} pages, ${content.length.toLocaleString()} chars`,
-    );
-
-    const categoryStartMs = Date.now();
-
-    try {
-      const { result: llmResult, inputTokens, outputTokens } = await callLLM(
-        client,
-        system,
-        content,
-        cfg.tool,
-        cfg.maxTokens,
+      console.log(
+        `[extractor] ${cfg.category}: ${selectedPages.length} pages, ${content.length.toLocaleString()} chars`,
       );
 
+      const categoryStartMs = Date.now();
+      const { result: llmResult, inputTokens, outputTokens } = await callLLM(
+        client, system, content, cfg.tool, cfg.maxTokens,
+      );
       const categoryElapsedMs = Date.now() - categoryStartMs;
       const categoryCost =
         (inputTokens / 1_000_000) * INPUT_COST_PER_MTOK +
         (outputTokens / 1_000_000) * OUTPUT_COST_PER_MTOK;
 
-      result.extraction_meta.total_input_tokens += inputTokens;
-      result.extraction_meta.total_output_tokens += outputTokens;
-      result.extraction_meta.total_cost_usd += categoryCost;
-      result.extraction_meta.per_category.push({
-        category: cfg.category,
-        input_tokens: inputTokens,
-        output_tokens: outputTokens,
-        cost_usd: Math.round(categoryCost * 1_000_000) / 1_000_000, // 6 decimal places
-        elapsed_ms: categoryElapsedMs,
-      });
-
-      // Map results to the output structure
-      switch (cfg.category) {
-        case 'assignments':
-          result.assignments = (llmResult.assignments as ExtractedAssignment[]) ?? [];
-          break;
-        case 'office_hours':
-          result.office_hours = (llmResult.office_hours as ExtractedOfficeHour[]) ?? [];
-          break;
-        case 'staff':
-          result.staff = (llmResult.staff as ExtractedStaff[]) ?? [];
-          break;
-        case 'exams':
-          result.exams = (llmResult.exams as ExtractedExam[]) ?? [];
-          break;
-        case 'syllabus': {
-          result.syllabus_weeks = (llmResult.syllabus_weeks as ExtractedSyllabusWeek[]) ?? [];
-          const rawPolicy = llmResult.grading_policy as ExtractedGradingPolicy | null;
-          result.grading_policy = validateGradingPolicy(rawPolicy);
-          break;
-        }
-      }
-
       const count = cfg.category === 'syllabus'
-        ? `${result.syllabus_weeks.length} weeks${result.grading_policy ? ' + grading' : ''}`
+        ? `${(llmResult.syllabus_weeks as unknown[])?.length ?? 0} weeks${llmResult.grading_policy ? ' + grading' : ''}`
         : `${(llmResult[cfg.extractKey] as unknown[])?.length ?? 0} items`;
       console.log(
         `[extractor] ${cfg.category}: ${count} — ` +
@@ -730,12 +691,56 @@ export async function extractCourseData(
           `$${categoryCost.toFixed(4)}, ${(categoryElapsedMs / 1000).toFixed(1)}s`,
       );
 
-      result.extraction_meta.categories_succeeded.push(cfg.category);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[extractor] ${cfg.category} failed: ${msg}`);
-      result.extraction_meta.categories_failed.push({ category: cfg.category, error: msg });
+      return { cfg, llmResult, inputTokens, outputTokens, categoryCost, categoryElapsedMs };
+    }),
+  );
+
+  for (const settled of categoryResults) {
+    if (settled.status === 'rejected') {
+      const msg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+      // Extract category name from error context — find which category failed
+      const failedIdx = categoryResults.indexOf(settled);
+      const failedCategory = CATEGORIES[failedIdx].category;
+      console.error(`[extractor] ${failedCategory} failed: ${msg}`);
+      result.extraction_meta.categories_failed.push({ category: failedCategory, error: msg });
+      continue;
     }
+
+    const { cfg, llmResult, inputTokens, outputTokens, categoryCost, categoryElapsedMs } = settled.value;
+
+    result.extraction_meta.total_input_tokens += inputTokens;
+    result.extraction_meta.total_output_tokens += outputTokens;
+    result.extraction_meta.total_cost_usd += categoryCost;
+    result.extraction_meta.per_category.push({
+      category: cfg.category,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cost_usd: Math.round(categoryCost * 1_000_000) / 1_000_000,
+      elapsed_ms: categoryElapsedMs,
+    });
+
+    switch (cfg.category) {
+      case 'assignments':
+        result.assignments = (llmResult.assignments as ExtractedAssignment[]) ?? [];
+        break;
+      case 'office_hours':
+        result.office_hours = (llmResult.office_hours as ExtractedOfficeHour[]) ?? [];
+        break;
+      case 'staff':
+        result.staff = (llmResult.staff as ExtractedStaff[]) ?? [];
+        break;
+      case 'exams':
+        result.exams = (llmResult.exams as ExtractedExam[]) ?? [];
+        break;
+      case 'syllabus': {
+        result.syllabus_weeks = (llmResult.syllabus_weeks as ExtractedSyllabusWeek[]) ?? [];
+        const rawPolicy = llmResult.grading_policy as ExtractedGradingPolicy | null;
+        result.grading_policy = validateGradingPolicy(rawPolicy);
+        break;
+      }
+    }
+
+    result.extraction_meta.categories_succeeded.push(cfg.category);
   }
 
   result.extraction_meta.elapsed_ms = Date.now() - startMs;
