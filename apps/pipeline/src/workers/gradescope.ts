@@ -172,6 +172,14 @@ export async function runGradescopeSync(userId: string): Promise<void> {
 
     const currentSemester = user.currentSemester ?? 'SP26';
 
+    // Separate courses into non-current (just raw upserts) and current-semester matched
+    type MatchedCourse = {
+      gsCourse: GradescopeCourse;
+      dbCourseId: string;
+      courseCode: string;
+    };
+    const matchedCourses: MatchedCourse[] = [];
+
     for (const gsCourse of courses) {
       const termStr = buildTermString(gsCourse);
       const isCurrent = isCurrentCourse(
@@ -212,19 +220,15 @@ export async function runGradescopeSync(userId: string): Promise<void> {
           console.error('[gradescope] Course upsert error:', e.message);
         });
 
-      // Only sync assignments for current semester
       if (!isCurrent) continue;
 
       // Match to DB course by code
       const matchedEnrollment = enrollments.find((e: typeof enrollments[number]) => {
         const code = (e.course.courseCode ?? '').toUpperCase();
         const gsShort = gsCourse.short_name.toUpperCase();
-        // Direct match: "CS 162" === "CS 162"
         if (code === gsShort) return true;
-        // Partial: "CS 189" in "CS 189/289A"
         if (gsShort.includes(code) || code.includes(gsShort.split('/')[0]))
           return true;
-        // Number match: extract course numbers
         const codeNum = code.match(/\d+/)?.[0];
         const gsNum = gsShort.match(/\d+/)?.[0];
         if (codeNum && gsNum && codeNum === gsNum) {
@@ -242,136 +246,236 @@ export async function runGradescopeSync(userId: string): Promise<void> {
         continue;
       }
 
-      const dbCourseId = matchedEnrollment.course.id;
+      matchedCourses.push({
+        gsCourse,
+        dbCourseId: matchedEnrollment.course.id,
+        courseCode: matchedEnrollment.course.courseCode ?? gsCourse.short_name,
+      });
+    }
+
+    // Sync assignments for all matched courses in parallel
+    console.log(`[gradescope] Syncing ${matchedCourses.length} matched courses in parallel`);
+
+    async function syncCourseAssignments(mc: MatchedCourse): Promise<{ created: number; updated: number }> {
+      const { gsCourse, dbCourseId, courseCode } = mc;
+      let created = 0;
+      let updated = 0;
+
+      console.log(`[gradescope] Syncing ${gsCourse.short_name} → ${courseCode}`);
+
+      const assignmentsData = await callService('/assignments', {
+        email,
+        password,
+        course_id: gsCourse.gradescope_id,
+      });
+
+      const assignments: GradescopeAssignment[] =
+        assignmentsData.assignments ?? [];
       console.log(
-        `[gradescope] Syncing ${gsCourse.short_name} → ${matchedEnrollment.course.courseCode}`,
+        `[gradescope] ${gsCourse.short_name}: ${assignments.length} assignments`,
       );
 
-      try {
-        const assignmentsData = await callService('/assignments', {
-          email,
-          password,
-          course_id: gsCourse.gradescope_id,
-        });
+      // Zero-assignment guard
+      const previousCount = await db.userAssignment.count({
+        where: {
+          userId,
+          assignment: { courseId: dbCourseId, source: 'gradescope' },
+        },
+      });
 
-        const assignments: GradescopeAssignment[] =
-          assignmentsData.assignments ?? [];
-        console.log(
-          `[gradescope] ${gsCourse.short_name}: ${assignments.length} assignments`,
+      if (previousCount > 5 && assignments.length === 0) {
+        console.warn(
+          `[Gradescope] Zero-assignment guard triggered for course ${dbCourseId}. ` +
+          `Previously had ${previousCount}, got 0. Skipping write.`
         );
-
-        // Zero-assignment guard: if we previously had assignments and now see 0,
-        // something is wrong with scraping — skip this course to prevent data loss
-        const previousCount = await db.userAssignment.count({
-          where: {
-            userId,
-            assignment: { courseId: dbCourseId, source: 'gradescope' },
+        await db.syncLog.updateMany({
+          where: { id: syncLog.id },
+          data: {
+            status: 'partial',
+            errorMessage: `Gradescope returned 0 assignments for ${gsCourse.short_name} ` +
+              `(previously had ${previousCount}). Possible scraping failure. Skipping update.`,
           },
         });
+        return { created, updated };
+      }
 
-        if (previousCount > 5 && assignments.length === 0) {
-          console.warn(
-            `[Gradescope] Zero-assignment guard triggered for course ${dbCourseId}. ` +
-            `Previously had ${previousCount}, got 0. Skipping write.`
-          );
-          await db.syncLog.update({
-            where: { id: syncLog.id },
-            data: {
-              status: 'partial',
-              errorMessage: `Gradescope returned 0 assignments for ${gsCourse.short_name} ` +
-                `(previously had ${previousCount}). Possible scraping failure. Skipping update.`,
-            },
-          });
-          continue;
-        }
+      // Get existing unified assignments for matching
+      const unifiedAssignments = await db.assignment.findMany({
+        where: { courseId: dbCourseId },
+        select: { id: true, name: true },
+      });
 
-        // Get existing unified assignments for matching
-        const unifiedAssignments = await db.assignment.findMany({
-          where: { courseId: dbCourseId },
-          select: { id: true, name: true },
-        });
-
-        for (const ga of assignments) {
-          // Write raw assignment
-          await db.rawGradescopeAssignment
-            .upsert({
-              where: {
-                userId_gradescopeId_courseGradescopeId: {
-                  userId,
-                  gradescopeId: ga.gradescope_id,
-                  courseGradescopeId: gsCourse.gradescope_id,
-                },
-              },
-              update: {
-                name: ga.title,
-                title: ga.title,
-                url: ga.url,
-                releaseDate: ga.release_date
-                  ? new Date(ga.release_date)
-                  : null,
-                dueDate: ga.due_date ? new Date(ga.due_date) : null,
-                hardDueDate: ga.late_due_date
-                  ? new Date(ga.late_due_date)
-                  : null,
-                totalPoints: ga.total_points,
-                earnedPoints: ga.earned_points,
-                submitted: ga.submitted,
-                submissionState: ga.status,
-                status: ga.status,
-                lateInfo: ga.late_info,
-                rawJson: ga as object,
-                syncedAt: now,
-              },
-              create: {
+      for (const ga of assignments) {
+        // Write raw assignment
+        await db.rawGradescopeAssignment
+          .upsert({
+            where: {
+              userId_gradescopeId_courseGradescopeId: {
                 userId,
                 gradescopeId: ga.gradescope_id,
                 courseGradescopeId: gsCourse.gradescope_id,
+              },
+            },
+            update: {
+              name: ga.title,
+              title: ga.title,
+              url: ga.url,
+              releaseDate: ga.release_date
+                ? new Date(ga.release_date)
+                : null,
+              dueDate: ga.due_date ? new Date(ga.due_date) : null,
+              hardDueDate: ga.late_due_date
+                ? new Date(ga.late_due_date)
+                : null,
+              totalPoints: ga.total_points,
+              earnedPoints: ga.earned_points,
+              submitted: ga.submitted,
+              submissionState: ga.status,
+              status: ga.status,
+              lateInfo: ga.late_info,
+              rawJson: ga as object,
+              syncedAt: now,
+            },
+            create: {
+              userId,
+              gradescopeId: ga.gradescope_id,
+              courseGradescopeId: gsCourse.gradescope_id,
+              name: ga.title,
+              title: ga.title,
+              url: ga.url,
+              releaseDate: ga.release_date
+                ? new Date(ga.release_date)
+                : null,
+              dueDate: ga.due_date ? new Date(ga.due_date) : null,
+              hardDueDate: ga.late_due_date
+                ? new Date(ga.late_due_date)
+                : null,
+              totalPoints: ga.total_points,
+              earnedPoints: ga.earned_points,
+              submitted: ga.submitted,
+              submissionState: ga.status,
+              status: ga.status,
+              lateInfo: ga.late_info,
+              rawJson: ga as object,
+              syncedAt: now,
+            },
+          })
+          .catch((e: any) => {
+            if (!e.message.includes('Unique')) {
+              console.error(
+                '[gradescope] Raw assignment error:',
+                e.message,
+              );
+            }
+          });
+
+        // Try to match to unified assignment by name
+        const matched = unifiedAssignments.find((ua: typeof unifiedAssignments[number]) =>
+          assignmentNamesMatch(ua.name ?? '', ga.title),
+        );
+
+        if (matched) {
+          if (ga.url) {
+            await db.assignment
+              .update({
+                where: { id: matched.id },
+                data: { specUrl: ga.url },
+              })
+              .catch(() => {});
+          }
+
+          let status: string;
+          if (ga.earned_points !== null) {
+            status = 'graded';
+          } else if (ga.submitted) {
+            status = 'submitted';
+          } else {
+            status = 'ungraded';
+          }
+
+          const isLate = ga.late_info !== null;
+
+          const existingUA = await db.userAssignment.findUnique({
+            where: {
+              userId_assignmentId: {
+                userId,
+                assignmentId: matched.id,
+              },
+            },
+          });
+
+          if (existingUA) {
+            const shouldUpdate =
+              existingUA.status !== 'graded' ||
+              (ga.earned_points !== null && existingUA.score === null);
+
+            if (shouldUpdate) {
+              await db.userAssignment.update({
+                where: {
+                  userId_assignmentId: {
+                    userId,
+                    assignmentId: matched.id,
+                  },
+                },
+                data: {
+                  score: ga.earned_points ?? existingUA.score,
+                  maxScore: ga.total_points ?? existingUA.maxScore,
+                  status,
+                  isLate,
+                  lateInfo: ga.late_info,
+                },
+              });
+              updated++;
+            }
+          } else {
+            await db.userAssignment
+              .create({
+                data: {
+                  userId,
+                  assignmentId: matched.id,
+                  score: ga.earned_points,
+                  maxScore: ga.total_points,
+                  status,
+                  isLate,
+                  lateInfo: ga.late_info,
+                },
+              })
+              .catch(() => {});
+            created++;
+          }
+        } else if (ga.title) {
+          const newId = `gs_${ga.gradescope_id}_${dbCourseId}`;
+          const newAssignment = await db.assignment
+            .upsert({
+              where: { id: newId },
+              update: {
                 name: ga.title,
-                title: ga.title,
-                url: ga.url,
-                releaseDate: ga.release_date
-                  ? new Date(ga.release_date)
-                  : null,
                 dueDate: ga.due_date ? new Date(ga.due_date) : null,
                 hardDueDate: ga.late_due_date
                   ? new Date(ga.late_due_date)
                   : null,
-                totalPoints: ga.total_points,
-                earnedPoints: ga.earned_points,
-                submitted: ga.submitted,
-                submissionState: ga.status,
-                status: ga.status,
-                lateInfo: ga.late_info,
-                rawJson: ga as object,
-                syncedAt: now,
+                pointsPossible: ga.total_points,
+                specUrl: ga.url ?? undefined,
+              },
+              create: {
+                id: newId,
+                courseId: dbCourseId,
+                name: ga.title,
+                assignmentType: 'homework',
+                dueDate: ga.due_date ? new Date(ga.due_date) : null,
+                hardDueDate: ga.late_due_date
+                  ? new Date(ga.late_due_date)
+                  : null,
+                pointsPossible: ga.total_points,
+                specUrl: ga.url,
+                gradescopeId: ga.gradescope_id,
+                source: 'gradescope',
+                isCurrentSemester: true,
               },
             })
-            .catch((e: any) => {
-              if (!e.message.includes('Unique')) {
-                console.error(
-                  '[gradescope] Raw assignment error:',
-                  e.message,
-                );
-              }
-            });
+            .catch(() => null);
 
-          // Try to match to unified assignment by name
-          const matched = unifiedAssignments.find((ua: typeof unifiedAssignments[number]) =>
-            assignmentNamesMatch(ua.name ?? '', ga.title),
-          );
-
-          if (matched) {
-            // Update specUrl on the unified assignment if we have a URL
-            if (ga.url) {
-              await db.assignment
-                .update({
-                  where: { id: matched.id },
-                  data: { specUrl: ga.url },
-                })
-                .catch(() => {});
-            }
-
-            // Determine status
+          if (newAssignment) {
             let status: string;
             if (ga.earned_points !== null) {
               status = 'graded';
@@ -381,140 +485,51 @@ export async function runGradescopeSync(userId: string): Promise<void> {
               status = 'ungraded';
             }
 
-            const isLate = ga.late_info !== null;
-
-            // Upsert UserAssignment
-            const existingUA = await db.userAssignment.findUnique({
-              where: {
-                userId_assignmentId: {
-                  userId,
-                  assignmentId: matched.id,
-                },
-              },
-            });
-
-            if (existingUA) {
-              // Only update if Gradescope has better data
-              const shouldUpdate =
-                existingUA.status !== 'graded' ||
-                (ga.earned_points !== null && existingUA.score === null);
-
-              if (shouldUpdate) {
-                await db.userAssignment.update({
-                  where: {
-                    userId_assignmentId: {
-                      userId,
-                      assignmentId: matched.id,
-                    },
-                  },
-                  data: {
-                    score: ga.earned_points ?? existingUA.score,
-                    maxScore: ga.total_points ?? existingUA.maxScore,
-                    status,
-                    isLate,
-                    lateInfo: ga.late_info,
-                  },
-                });
-                recordsUpdated++;
-              }
-            } else {
-              await db.userAssignment
-                .create({
-                  data: {
-                    userId,
-                    assignmentId: matched.id,
-                    score: ga.earned_points,
-                    maxScore: ga.total_points,
-                    status,
-                    isLate,
-                    lateInfo: ga.late_info,
-                  },
-                })
-                .catch(() => {});
-              recordsCreated++;
-            }
-          } else if (ga.title) {
-            // Assignment only in Gradescope — create new unified assignment
-            const newId = `gs_${ga.gradescope_id}_${dbCourseId}`;
-            const newAssignment = await db.assignment
+            await db.userAssignment
               .upsert({
-                where: { id: newId },
-                update: {
-                  name: ga.title,
-                  dueDate: ga.due_date ? new Date(ga.due_date) : null,
-                  hardDueDate: ga.late_due_date
-                    ? new Date(ga.late_due_date)
-                    : null,
-                  pointsPossible: ga.total_points,
-                  specUrl: ga.url ?? undefined,
-                },
-                create: {
-                  id: newId,
-                  courseId: dbCourseId,
-                  name: ga.title,
-                  assignmentType: 'homework',
-                  dueDate: ga.due_date ? new Date(ga.due_date) : null,
-                  hardDueDate: ga.late_due_date
-                    ? new Date(ga.late_due_date)
-                    : null,
-                  pointsPossible: ga.total_points,
-                  specUrl: ga.url,
-                  gradescopeId: ga.gradescope_id,
-                  source: 'gradescope',
-                  isCurrentSemester: true,
-                },
-              })
-              .catch(() => null);
-
-            if (newAssignment) {
-              let status: string;
-              if (ga.earned_points !== null) {
-                status = 'graded';
-              } else if (ga.submitted) {
-                status = 'submitted';
-              } else {
-                status = 'ungraded';
-              }
-
-              await db.userAssignment
-                .upsert({
-                  where: {
-                    userId_assignmentId: {
-                      userId,
-                      assignmentId: newAssignment.id,
-                    },
-                  },
-                  update: {
-                    score: ga.earned_points,
-                    maxScore: ga.total_points,
-                    status,
-                    isLate: ga.late_info !== null,
-                    lateInfo: ga.late_info,
-                  },
-                  create: {
+                where: {
+                  userId_assignmentId: {
                     userId,
                     assignmentId: newAssignment.id,
-                    score: ga.earned_points,
-                    maxScore: ga.total_points,
-                    status,
-                    isLate: ga.late_info !== null,
-                    lateInfo: ga.late_info,
                   },
-                })
-                .catch(() => {});
-              recordsCreated++;
-            }
+                },
+                update: {
+                  score: ga.earned_points,
+                  maxScore: ga.total_points,
+                  status,
+                  isLate: ga.late_info !== null,
+                  lateInfo: ga.late_info,
+                },
+                create: {
+                  userId,
+                  assignmentId: newAssignment.id,
+                  score: ga.earned_points,
+                  maxScore: ga.total_points,
+                  status,
+                  isLate: ga.late_info !== null,
+                  lateInfo: ga.late_info,
+                },
+              })
+              .catch(() => {});
+            created++;
           }
         }
-      } catch (courseError: any) {
-        console.error(
-          `[gradescope] Failed ${gsCourse.short_name}:`,
-          courseError.message,
-        );
       }
 
-      // Rate limit: 200ms between courses
-      await new Promise((r) => setTimeout(r, 200));
+      return { created, updated };
+    }
+
+    const results = await Promise.allSettled(
+      matchedCourses.map((mc) => syncCourseAssignments(mc)),
+    );
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        recordsCreated += result.value.created;
+        recordsUpdated += result.value.updated;
+      } else {
+        console.error(`[gradescope] Course sync failed:`, result.reason?.message ?? result.reason);
+      }
     }
 
     // Update sync metadata

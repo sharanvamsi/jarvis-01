@@ -3,11 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Loader2, Settings, ArrowRight, Check, Globe } from 'lucide-react';
+import { Loader2, Settings, ArrowRight, Check, Globe, Lock } from 'lucide-react';
 import { SignInButton } from '@/components/auth/SignInButton';
 import CourseSelectionList, { type CourseCandidate } from '@/components/settings/CourseSelectionList';
 
-type Step = 'signin' | 'canvas' | 'courses' | 'websites' | 'done';
+type Step = 'signin' | 'canvas' | 'courses' | 'gradescope' | 'websites' | 'done';
 
 export default function Onboarding() {
   const [step, setStep] = useState<Step>('signin');
@@ -26,6 +26,12 @@ export default function Onboarding() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [savingCourses, setSavingCourses] = useState(false);
 
+  // Gradescope state
+  const [gsEmail, setGsEmail] = useState('');
+  const [gsPassword, setGsPassword] = useState('');
+  const [savingGs, setSavingGs] = useState(false);
+  const [gsConnected, setGsConnected] = useState(false);
+
   // Website URL state
   const [createdCourses, setCreatedCourses] = useState<{id: string; courseCode: string; courseName: string}[]>([]);
   const [websiteUrls, setWebsiteUrls] = useState<Record<string, string>>({});
@@ -37,7 +43,7 @@ export default function Onboarding() {
     }
   }, [status, step]);
 
-  const stepIndex = { signin: 0, canvas: 1, courses: 2, websites: 3, done: 4 };
+  const stepIndex = { signin: 0, canvas: 1, courses: 2, gradescope: 3, websites: 4, done: 5 };
   const firstName = session?.user?.name?.split(' ')[0] ?? 'there';
 
   // ── Step 2: Save Canvas token ──────────────────────────────
@@ -102,7 +108,7 @@ export default function Onboarding() {
       const initUrls: Record<string, string> = {};
       for (const c of created) initUrls[c.id] = '';
       setWebsiteUrls(initUrls);
-      setStep('websites');
+      setStep('gradescope');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save selected courses');
     } finally {
@@ -110,7 +116,29 @@ export default function Onboarding() {
     }
   }
 
-  // ── Step 4: Save website URLs ─────────────────────────────
+  // ── Step 4: Connect Gradescope ─────────────────────────────
+  async function handleConnectGradescope() {
+    if (!gsEmail.trim() || !gsPassword.trim()) return;
+    setSavingGs(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/tokens/gradescope', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: gsEmail.trim(), password: gsPassword.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed to connect Gradescope');
+      setGsConnected(true);
+      setTimeout(() => setStep('websites'), 1000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to connect Gradescope');
+    } finally {
+      setSavingGs(false);
+    }
+  }
+
+  // ── Step 5: Save website URLs ─────────────────────────────
   async function handleSaveWebsites() {
     setSavingWebsites(true);
     setError(null);
@@ -159,7 +187,7 @@ export default function Onboarding() {
 
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          {[0, 1, 2, 3, 4].map((i) => (
+          {[0, 1, 2, 3, 4, 5].map((i) => (
             <div
               key={i}
               className={`w-2 h-2 rounded-full transition-colors ${
@@ -323,7 +351,81 @@ export default function Onboarding() {
             </div>
           )}
 
-          {/* ── STEP 4: Website URLs ───────────────────── */}
+          {/* ── STEP 4: Gradescope ─────────────────────── */}
+          {step === 'gradescope' && (
+            <div>
+              <h2 className="text-[#F5F5F5] text-2xl font-medium mb-2">
+                Connect Gradescope
+              </h2>
+              <p className="text-[#A3A3A3] text-sm mb-6">
+                Link your Gradescope account to sync grades and submissions.
+              </p>
+
+              {gsConnected ? (
+                <div className="flex items-center gap-2 py-4 justify-center">
+                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  </div>
+                  <span className="text-emerald-400 text-sm font-medium">Connected successfully</span>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-3 mb-4">
+                    <div>
+                      <label className="text-xs text-[#A3A3A3] mb-1 block">Email</label>
+                      <input
+                        type="email"
+                        value={gsEmail}
+                        onChange={e => { setGsEmail(e.target.value); setError(null); }}
+                        placeholder="you@berkeley.edu"
+                        className="w-full bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[#F5F5F5] text-sm px-3 py-2 placeholder-[#525252] outline-none focus:border-blue-500 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-[#A3A3A3] mb-1 block">Password</label>
+                      <input
+                        type="password"
+                        value={gsPassword}
+                        onChange={e => { setGsPassword(e.target.value); setError(null); }}
+                        placeholder="Gradescope password"
+                        className="w-full bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[#F5F5F5] text-sm px-3 py-2 placeholder-[#525252] outline-none focus:border-blue-500 transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[#525252] text-xs mb-4 flex items-start gap-1.5">
+                    <Lock className="w-3 h-3 mt-0.5 shrink-0" />
+                    Your credentials are encrypted with AES-256-GCM and never stored in plaintext.
+                  </p>
+
+                  {error && (
+                    <p className="text-red-400 text-xs mb-3">{error}</p>
+                  )}
+
+                  <button
+                    onClick={handleConnectGradescope}
+                    disabled={!gsEmail.trim() || !gsPassword.trim() || savingGs}
+                    className="w-full bg-[#3B82F6] hover:bg-[#2563EB] disabled:bg-[#1F1F1F] disabled:text-[#525252] text-white font-medium py-2.5 px-4 rounded transition-colors flex items-center justify-center gap-2"
+                  >
+                    {savingGs ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Connecting...</>
+                    ) : (
+                      'Connect Gradescope'
+                    )}
+                  </button>
+                </>
+              )}
+
+              <button
+                onClick={() => setStep('websites')}
+                className="w-full text-[#525252] hover:text-[#A3A3A3] text-xs py-2 mt-2 transition-colors"
+              >
+                Skip for now
+              </button>
+            </div>
+          )}
+
+          {/* ── STEP 5: Website URLs ───────────────────── */}
           {step === 'websites' && (
             <div>
               <h2 className="text-[#F5F5F5] text-2xl font-medium mb-1">
@@ -398,7 +500,7 @@ export default function Onboarding() {
               </p>
 
               <p className="text-[#525252] text-xs mb-6">
-                You can also connect Ed Discussion and Gradescope in Settings for richer data.
+                You can also connect Ed Discussion in Settings for richer data.
               </p>
 
               <button

@@ -149,17 +149,22 @@ export async function syncSyllabus(userId: string): Promise<void> {
         });
       }
 
-      // Create grade scale if present
+      // Create grade scale if present (filter out entries with missing required fields)
       if (extracted.gradeScale) {
-        await tx.gradeScale.createMany({
-          data: extracted.gradeScale.map((gs) => ({
-            syllabusId: syllabus.id,
-            letter: gs.letter,
-            minScore: gs.minScore,
-            maxScore: gs.maxScore,
-            isPoints: gs.isPoints,
-          })),
-        });
+        const validScales = extracted.gradeScale.filter(
+          (gs) => gs.letter != null && gs.minScore != null && gs.maxScore != null,
+        );
+        if (validScales.length > 0) {
+          await tx.gradeScale.createMany({
+            data: validScales.map((gs) => ({
+              syllabusId: syllabus.id,
+              letter: gs.letter,
+              minScore: gs.minScore,
+              maxScore: gs.maxScore,
+              isPoints: gs.isPoints ?? false,
+            })),
+          });
+        }
       }
 
       // Create clobber policies

@@ -3,8 +3,15 @@ from pydantic import BaseModel
 from typing import Optional
 import traceback
 import re
+import time
+import sys
 
 app = FastAPI(title="Jarvis Gradescope Service")
+
+def tlog(msg: str):
+    """Timestamped log to stderr (visible in tee output)."""
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}", file=sys.stderr, flush=True)
 
 # ── REQUEST/RESPONSE MODELS ──────────────────────────────────
 
@@ -82,8 +89,12 @@ def login_to_gradescope(email: str, password: str):
     """Create and return a logged-in GSConnection."""
     try:
         from gradescopeapi.classes.connection import GSConnection
+        t0 = time.time()
         conn = GSConnection()
+        tlog(f"GSConnection created in {time.time()-t0:.3f}s")
+        t1 = time.time()
         conn.login(email, password)
+        tlog(f"login completed in {time.time()-t1:.3f}s")
         return conn
     except Exception as e:
         raise HTTPException(
@@ -109,10 +120,14 @@ def health():
 @app.post("/courses")
 def get_courses(req: CoursesRequest):
     """Get all courses for a user."""
+    t_total = time.time()
+    tlog("POST /courses — start")
     conn = login_to_gradescope(req.email, req.password)
 
     try:
+        t0 = time.time()
         raw_courses = conn.account.get_courses()
+        tlog(f"get_courses API call: {time.time()-t0:.3f}s")
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -142,15 +157,20 @@ def get_courses(req: CoursesRequest):
                 print(f"Warning: could not parse course: {e}")
                 continue
 
+    tlog(f"POST /courses — done: {len(courses)} courses in {time.time()-t_total:.3f}s")
     return {"courses": [c.dict() for c in courses]}
 
 @app.post("/assignments")
 def get_assignments(req: AssignmentsRequest):
     """Get all assignments for a course."""
+    t_total = time.time()
+    tlog(f"POST /assignments — start (course_id={req.course_id})")
     conn = login_to_gradescope(req.email, req.password)
 
     try:
+        t0 = time.time()
         raw_assignments = conn.account.get_assignments(req.course_id)
+        tlog(f"get_assignments API call: {time.time()-t0:.3f}s")
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -222,6 +242,7 @@ def get_assignments(req: AssignmentsRequest):
             traceback.print_exc()
             continue
 
+    tlog(f"POST /assignments — done: {len(assignments)} assignments in {time.time()-t_total:.3f}s")
     return {
         "assignments": [a.dict() for a in assignments],
         "count": len(assignments),
