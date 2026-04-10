@@ -400,11 +400,11 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
     }
   }
 
-  await db.syncLog.update({
+  await db.syncLog.updateMany({
     where: { id: syncLog.id },
     data: {
       status: failedCourses.length > 0 ? 'partial' : 'success',
-      completedAt: now,
+      completedAt: new Date(),
       recordsCreated: totalCreated,
       errorMessage: failedCourses.length > 0 ? `Failed: ${failedCourses.join(', ')}` : null,
     },

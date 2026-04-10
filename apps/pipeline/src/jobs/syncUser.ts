@@ -121,7 +121,7 @@ export async function runSyncPhase2(
     console.error('[syncUser] Assignment matching failed:', err);
   }
 
-  await db.user.update({
+  await db.user.updateMany({
     where: { id: userId },
     data: { lastSyncAt: new Date() },
   });
