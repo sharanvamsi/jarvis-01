@@ -93,7 +93,7 @@ function getStatusClasses(status: string): string {
   }
 }
 
-export function CourseDetailClient({ course }: { course: Course }) {
+export function CourseDetailClient({ course, edConnected = false }: { course: Course; edConnected?: boolean }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'assignments' | 'staff' | 'ed'>('overview')
   const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'upcoming' | 'past' | 'missing'>('all')
   const [edFilter, setEdFilter] = useState<'announcements' | 'questions'>('announcements')
@@ -464,6 +464,15 @@ export function CourseDetailClient({ course }: { course: Course }) {
               </div>
             ) : (
               <>
+                {!edConnected && (
+                  <div className="bg-amber-500/5 border border-amber-500/20 rounded-md px-3 py-2 mb-4 flex items-start gap-2">
+                    <span className="text-amber-400 text-xs mt-0.5">!</span>
+                    <p className="text-amber-400/80 text-xs">
+                      Ed is not connected — these threads may not be up to date.{' '}
+                      <a href="/settings" className="underline hover:text-amber-300">Connect Ed in Settings</a> to keep them synced.
+                    </p>
+                  </div>
+                )}
                 {/* Search */}
                 <div className="relative mb-4">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#525252]" />

@@ -25,7 +25,7 @@ export async function GET() {
         where: {
           userId: session.user.id,
           service: "gradescope",
-          status: "success",
+          status: { in: ["success", "partial"] },
         },
         orderBy: { completedAt: "desc" },
       }),

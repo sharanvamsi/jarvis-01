@@ -78,6 +78,50 @@ function extractLinkedAssignment(
   return match ? match[0].trim() : null;
 }
 
+interface EdUserCourse {
+  id: number;
+  code: string;
+  name: string;
+  year: number;
+  session: string;
+  status: string;
+  role: string;
+}
+
+/**
+ * Fetch the user's Ed courses via GET /api/user.
+ * Returns courses the user is enrolled in on Ed.
+ */
+async function fetchEdCourses(token: string): Promise<EdUserCourse[]> {
+  const response = await fetch(`${BASE_URL}/user`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Ed user API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as any;
+  // Ed returns { user: { ..., courses: [ { course: { id, code, name, ... }, role }, ... ] } }
+  const rawCourses = data.user?.courses ?? data.courses ?? [];
+  return rawCourses.map((entry: any) => {
+    const c = entry.course ?? entry;
+    return {
+      id: c.id,
+      code: c.code ?? '',
+      name: c.name ?? '',
+      year: c.year ?? 0,
+      session: c.session ?? '',
+      status: c.status ?? '',
+      role: entry.role ?? 'student',
+    };
+  });
+}
+
 async function fetchEdThreads(
   courseId: number,
   token: string
@@ -198,6 +242,53 @@ export async function runEdSync(userId: string): Promise<void> {
     });
 
     const filteredEnrollments = filterByUserSelection(enrollments);
+
+    // Check if any enrolled courses are missing edCourseId
+    const missingEdId = filteredEnrollments.some((e) => !e.course.edCourseId);
+
+    if (missingEdId) {
+      // Auto-discover Ed course IDs only when needed
+      try {
+        const userEdCourses = await fetchEdCourses(token);
+        console.log(`[ed] Discovering Ed course IDs (${userEdCourses.length} Ed courses found)`);
+
+        for (const edCourse of userEdCourses) {
+          const edCode = edCourse.code.toUpperCase().replace(/\s+/g, ' ').trim();
+          const matched = filteredEnrollments.find((e) => {
+            if (e.course.edCourseId) return false; // already linked
+            const dbCode = (e.course.courseCode ?? '').toUpperCase().replace(/\s+/g, ' ').trim();
+            if (dbCode === edCode) return true;
+            const edNum = edCode.match(/\d+/)?.[0];
+            const dbNum = dbCode.match(/\d+/)?.[0];
+            if (edNum && dbNum && edNum === dbNum) {
+              const edDept = edCode.replace(/\s*\d+.*/, '');
+              const dbDept = dbCode.replace(/\s*\d+.*/, '');
+              const aliases: Record<string, string[]> = {
+                CS: ['COMPSCI', 'EECS', 'CS'],
+                COMPSCI: ['CS', 'EECS'],
+                EECS: ['CS', 'COMPSCI'],
+              };
+              if (edDept === dbDept) return true;
+              if (aliases[dbDept]?.includes(edDept)) return true;
+              if (aliases[edDept]?.includes(dbDept)) return true;
+            }
+            return false;
+          });
+
+          if (matched) {
+            console.log(`[ed] Auto-linking ${matched.course.courseCode} → Ed course ${edCourse.id} (${edCourse.code})`);
+            await db.course.update({
+              where: { id: matched.course.id },
+              data: { edCourseId: String(edCourse.id) },
+            }).catch((e: any) => console.error('[ed] Failed to update edCourseId:', e.message));
+            matched.course.edCourseId = String(edCourse.id);
+          }
+        }
+      } catch (e: any) {
+        console.error('[ed] Failed to fetch Ed courses for discovery:', e.message);
+      }
+    }
+
     const edCourses = filteredEnrollments
       .map((e) => e.course)
       .filter((c) => c.edCourseId !== null);

@@ -20,7 +20,7 @@ export async function GET() {
 
   const [successLog, latestLog] = await Promise.all([
     db.syncLog.findFirst({
-      where: { userId, service: "canvas", status: "success" },
+      where: { userId, service: "canvas", status: { in: ["success", "partial"] } },
       orderBy: { completedAt: "desc" },
     }),
     db.syncLog.findFirst({

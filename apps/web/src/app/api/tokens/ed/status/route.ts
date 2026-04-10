@@ -23,7 +23,7 @@ export async function GET() {
       where: {
         userId: session.user.id,
         service: "ed",
-        status: "success",
+        status: { in: ["success", "partial"] },
       },
       orderBy: { completedAt: "desc" },
     })
