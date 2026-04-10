@@ -93,6 +93,16 @@ export async function POST(req: NextRequest) {
     })
   })
 
+  // Build canvasId → courseId map for the frontend
+  const selectedCourses = await db.course.findMany({
+    where: { canvasId: { in: selectedCanvasIds } },
+    select: { id: true, canvasId: true },
+  })
+  const courseMap: Record<string, string> = {}
+  for (const c of selectedCourses) {
+    if (c.canvasId) courseMap[c.canvasId] = c.id
+  }
+
   // Trigger pipeline sync
   const pipelineUrl = process.env.PIPELINE_INTERNAL_URL
   if (pipelineUrl) {
@@ -107,5 +117,5 @@ export async function POST(req: NextRequest) {
     }).catch(() => {})
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, courseMap })
 }

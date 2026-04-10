@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Loader2, Plus, X } from 'lucide-react';
+import { Check, Globe, Loader2, Plus, X } from 'lucide-react';
 
 interface CourseEntry {
   canvasId: string;
@@ -21,6 +21,12 @@ export default function CourseManagementCard() {
   const [showAddCourse, setShowAddCourse] = useState(false);
   const [justAdded, setJustAdded] = useState<string | null>(null);
   const [justRemoved, setJustRemoved] = useState<string | null>(null);
+  // canvasId → DB course ID mapping (from selections API)
+  const [courseIdMap, setCourseIdMap] = useState<Record<string, string>>({});
+  // Inline website URL input for just-added course
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  const [savingWebsite, setSavingWebsite] = useState(false);
+  const [websiteSaved, setWebsiteSaved] = useState(false);
 
   const fetchCourses = useCallback(async () => {
     setLoading(true);
@@ -53,6 +59,10 @@ export default function CourseManagementCard() {
         body: JSON.stringify({ selectedCanvasIds: newSelectedIds }),
       });
       if (res.ok) {
+        const data = await res.json();
+        if (data.courseMap) {
+          setCourseIdMap(prev => ({ ...prev, ...data.courseMap }));
+        }
         // Update local state immediately
         setAllCourses(prev => prev.map(c => ({
           ...c,
@@ -67,10 +77,42 @@ export default function CourseManagementCard() {
 
   async function handleAddCourse(canvasId: string) {
     const newIds = [...selectedCourses.map(c => c.canvasId), canvasId];
+    setWebsiteUrl('');
+    setWebsiteSaved(false);
     setJustAdded(canvasId);
     await saveSelections(newIds);
     setShowAddCourse(false);
-    setTimeout(() => setJustAdded(null), 2000);
+  }
+
+  async function handleSaveWebsite() {
+    if (!justAdded || !websiteUrl.trim()) return;
+    const courseId = courseIdMap[justAdded];
+    if (!courseId) return;
+
+    setSavingWebsite(true);
+    try {
+      const res = await fetch(`/api/courses/${courseId}/website`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: websiteUrl.trim() }),
+      });
+      if (res.ok) {
+        setWebsiteSaved(true);
+        setTimeout(() => {
+          setJustAdded(null);
+          setWebsiteUrl('');
+          setWebsiteSaved(false);
+        }, 1500);
+      }
+    } catch { /* ignore */ } finally {
+      setSavingWebsite(false);
+    }
+  }
+
+  function handleDismissWebsite() {
+    setJustAdded(null);
+    setWebsiteUrl('');
+    setWebsiteSaved(false);
   }
 
   async function handleRemoveCourse(canvasId: string) {
@@ -187,11 +229,51 @@ export default function CourseManagementCard() {
         </div>
       )}
 
-      {/* Feedback */}
+      {/* Inline website URL prompt after adding a course */}
       {justAdded && (
-        <p className="text-emerald-400 text-xs mt-2 flex items-center gap-1">
-          <Check className="w-3 h-3" /> Course added — syncing data now
-        </p>
+        <div className="mt-3 border border-[#1F1F1F] rounded-md p-3 bg-[#0A0A0A]">
+          <p className="text-emerald-400 text-xs flex items-center gap-1 mb-2">
+            <Check className="w-3 h-3" /> Course added — syncing data now
+          </p>
+          {!websiteSaved ? (
+            <>
+              <p className="text-[#A3A3A3] text-xs mb-2">
+                Does this course have a website? Adding it lets us sync assignments, office hours, and staff.
+              </p>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 flex items-center gap-2 bg-[#111111] border border-[#1F1F1F] rounded px-2.5 py-1.5">
+                  <Globe className="w-3.5 h-3.5 text-[#525252] shrink-0" />
+                  <input
+                    type="url"
+                    value={websiteUrl}
+                    onChange={(e) => setWebsiteUrl(e.target.value)}
+                    placeholder="https://cs61b.org"
+                    className="flex-1 bg-transparent text-sm text-[#F5F5F5] placeholder-[#525252] outline-none"
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveWebsite()}
+                  />
+                </div>
+                <button
+                  onClick={handleSaveWebsite}
+                  disabled={!websiteUrl.trim() || savingWebsite}
+                  className="px-3 py-1.5 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition-colors"
+                >
+                  {savingWebsite ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
+                </button>
+                <button
+                  onClick={handleDismissWebsite}
+                  className="text-[#525252] hover:text-[#A3A3A3] transition-colors"
+                  title="Skip"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="text-emerald-400 text-xs flex items-center gap-1">
+              <Check className="w-3 h-3" /> Website saved
+            </p>
+          )}
+        </div>
       )}
       {justRemoved && (
         <p className="text-[#A3A3A3] text-xs mt-2">Course removed</p>
