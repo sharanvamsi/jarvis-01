@@ -2,10 +2,17 @@
   "name": "@jarvis/db",
   "version": "0.0.1",
   "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc",
     "generate": "prisma generate --schema=./prisma/schema.prisma",
     "migrate:dev": "prisma migrate dev --schema=./prisma/schema.prisma",
     "migrate:deploy": "prisma migrate deploy --schema=./prisma/schema.prisma",

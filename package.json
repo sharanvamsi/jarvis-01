@@ -12,6 +12,7 @@
     "build:web": "npm run build --workspace=apps/web",
     "build:pipeline": "npm run build --workspace=apps/pipeline",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:build": "npm run build --workspace=packages/db",
     "db:generate": "npm run generate --workspace=packages/db",
     "db:migrate:dev": "npm run migrate:dev --workspace=packages/db",
     "db:migrate:deploy": "npm run migrate:deploy --workspace=packages/db",
