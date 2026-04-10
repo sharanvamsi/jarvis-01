@@ -1,8 +1,6 @@
 [build]
-builder = "nixpacks"
-buildCommand = "cd ../.. && npm install && npm run db:generate && cd apps/pipeline && npm run build"
+dockerfilePath = "../../Dockerfile.pipeline"
 
 [deploy]
-startCommand = "npm start"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
