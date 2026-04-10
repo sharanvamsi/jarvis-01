@@ -23,22 +23,23 @@ ALTER TABLE "syllabus_documents"
   ADD CONSTRAINT "syllabus_documents_syllabus_id_fkey"
   FOREIGN KEY ("syllabus_id") REFERENCES "syllabi"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- Backfill: copy existing raw_text into the new table, computing full sha256 hash.
+-- Backfill: copy existing rawText into the new table, computing full sha256 hash.
+-- Note: syllabi table uses camelCase column "rawText" (no @map in original schema).
 INSERT INTO "syllabus_documents" (id, syllabus_id, source, raw_text, content_hash, fetched_at)
 SELECT
   gen_random_uuid()::text,
-  id,
+  s.id,
   CASE
-    WHEN source = 'canvas' THEN 'canvas_html'
-    WHEN source = 'website' THEN 'website'
-    ELSE source
+    WHEN s.source = 'canvas' THEN 'canvas_html'
+    WHEN s.source = 'website' THEN 'website'
+    ELSE s.source
   END,
-  raw_text,
-  encode(sha256(raw_text::bytea), 'hex'),
-  extracted_at
-FROM "syllabi"
-WHERE raw_text IS NOT NULL AND raw_text <> '';
+  s."rawText",
+  encode(sha256(s."rawText"::bytea), 'hex'),
+  s.extracted_at
+FROM "syllabi" s
+WHERE s."rawText" IS NOT NULL AND s."rawText" <> '';
 
 -- Drop old columns on syllabi
-ALTER TABLE "syllabi" DROP COLUMN IF EXISTS "raw_text";
+ALTER TABLE "syllabi" DROP COLUMN IF EXISTS "rawText";
 ALTER TABLE "syllabi" DROP COLUMN IF EXISTS "source";
