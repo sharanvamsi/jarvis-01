@@ -17,4 +17,4 @@ COPY apps/pipeline/ apps/pipeline/
 RUN npm run db:generate && npm run db:build && npm run build:pipeline
 
 WORKDIR /app/apps/pipeline
-CMD ["node", "dist/index.js"]
+CMD npx prisma migrate deploy --schema=/app/packages/db/prisma/schema.prisma && node dist/index.js
