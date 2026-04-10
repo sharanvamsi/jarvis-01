@@ -23,7 +23,6 @@ model User {
   image           String?
   currentSemester String    @default("SP26") @map("current_semester")
   onboardingDone  Boolean   @default(false) @map("onboarding_done")
-  gradescopeConnected Boolean   @default(false) @map("gradescope_connected")
   lastSyncAt      DateTime? @map("last_sync_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
@@ -35,7 +34,6 @@ model User {
   calendarEvents              CalendarEvent[]
   syncTokens                  SyncToken[]
   syncLogs                    SyncLog[]
-  rawApiSnapshots             RawApiSnapshot[]
   rawCanvasCourses            RawCanvasCourse[]
   rawCanvasAssignments        RawCanvasAssignment[]
   rawCanvasSubmissions        RawCanvasSubmission[]
@@ -44,8 +42,9 @@ model User {
   rawGradescopeAssignments    RawGradescopeAssignment[]
   rawEdThreads                RawEdThread[]
   rawCalendarEvents           RawCalendarEvent[]
-  rawCourseWebsiteAssignments RawCourseWebsiteAssignment[]
+  // rawCourseWebsiteAssignments — course-scoped, not per user
   // rawCourseWebsitePageHashes removed — now course-scoped
+  // rawApiSnapshots removed — dead storage
   assignmentOverrides         AssignmentOverride[]
   createdAssignments          Assignment[]               @relation("CreatedAssignments")
   examStats                   ExamStat[]
@@ -62,7 +61,6 @@ model DeletedUser {
   image               String?
   currentSemester     String    @map("current_semester")
   onboardingDone      Boolean   @map("onboarding_done")
-  gradescopeConnected Boolean   @map("gradescope_connected")
   lastSyncAt          DateTime? @map("last_sync_at")
   originalCreatedAt   DateTime  @map("original_created_at")
   originalUpdatedAt   DateTime  @map("original_updated_at")
@@ -118,6 +116,7 @@ model Course {
   syllabusWeeks     SyllabusWeek[]
   syllabus          Syllabus?
   websitePageHash   RawCourseWebsitePageHash?
+  rawCourseWebsiteAssignments RawCourseWebsiteAssignment[]
   @@unique([courseCode, term])
   @@map("courses")
 }
@@ -151,7 +150,6 @@ model Assignment {
   canvasId           String?   @map("canvas_id")
   gradescopeId       String?   @map("gradescope_id")
   courseWebsiteId    String?   @map("course_website_id")
-  edThreadIds        String[]  @map("ed_thread_ids")
   submissionPlatform String?   @map("submission_platform")
   hardDueDate        DateTime? @map("hard_due_date")
   source             String?   // canvas, gradescope, course_website, manual
@@ -167,9 +165,22 @@ model Assignment {
   groupMappings   AssignmentGroupMapping[]
   examStats       ExamStat[]
   overrides       AssignmentOverride[]
+  edThreadLinks   AssignmentEdThread[]
 
   @@index([courseId, isCurrentSemester, dueDate])
   @@map("assignments")
+}
+
+model AssignmentEdThread {
+  assignmentId String @map("assignment_id")
+  edThreadId   String @map("ed_thread_id")
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  edThread   EdThread   @relation(fields: [edThreadId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, edThreadId])
+  @@index([edThreadId])
+  @@map("assignment_ed_threads")
 }
 
 model UserAssignment {
@@ -230,7 +241,8 @@ model EdThread {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course          Course               @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  assignmentLinks AssignmentEdThread[]
 
   @@unique([edThreadId])
   @@index([courseId, threadType, postedAt])
@@ -316,18 +328,7 @@ model SyncLog {
   @@map("sync_logs")
 }
 
-model RawApiSnapshot {
-  id       String   @id @default(cuid())
-  userId   String   @map("user_id")
-  service  String
-  rawJson  Json     @map("raw_json")
-  syncedAt DateTime @default(now()) @map("synced_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, service])
-  @@map("raw_api_snapshots")
-}
+// RawApiSnapshot removed — dead storage, never queried
 
 // ═══════════════════════════════════════════════
 // RAW CANVAS TABLES
@@ -579,9 +580,7 @@ model SyllabusWeek {
 
 model RawCourseWebsiteAssignment {
   id             String    @id @default(cuid())
-  userId         String    @map("user_id")
   courseId       String    @map("course_id")
-  courseName     String?   @map("course_name")
   name           String
   specUrl        String?   @map("spec_url")
   dueDate        DateTime? @map("due_date")
@@ -590,8 +589,9 @@ model RawCourseWebsiteAssignment {
   rawJson        Json      @map("raw_json")
   syncedAt       DateTime  @default(now()) @map("synced_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
+  @@unique([courseId, name])
   @@map("raw_course_website_assignments")
 }
 
@@ -703,19 +703,35 @@ model BerkeleyTimeSnapshot {
 model Syllabus {
   id                String           @id @default(cuid())
   courseId          String           @unique @map("course_id")
-  source            String           // "canvas" | "website" | "manual"
-  rawText           String           @db.Text
   extractedAt       DateTime         @default(now()) @map("extracted_at")
   confirmedAt       DateTime?        @map("confirmed_at")
   confirmedBy       String?          @map("confirmed_by")
   isCurved          Boolean          @default(false) @map("is_curved")
   curveDescription  String?          @map("curve_description")
+  isPointsBased     Boolean          @default(false) @map("is_points_based")
+  totalPoints       Float?           @map("total_points")
   course            Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  document          SyllabusDocument?
   componentGroups   ComponentGroup[]
   gradeScale        GradeScale[]
   clobberPolicies   ClobberPolicy[]
 
   @@map("syllabi")
+}
+
+model SyllabusDocument {
+  id          String   @id @default(cuid())
+  syllabusId  String   @unique @map("syllabus_id")
+  source      String   // "canvas_html" | "canvas_pdf" | "website" | "manual"
+  sourceUrl   String?  @map("source_url")
+  rawText     String   @db.Text @map("raw_text")
+  contentHash String   @map("content_hash") // full 64-char sha256
+  fetchedAt   DateTime @default(now()) @map("fetched_at")
+
+  syllabus Syllabus @relation(fields: [syllabusId], references: [id], onDelete: Cascade)
+
+  @@index([contentHash])
+  @@map("syllabus_documents")
 }
 
 model ComponentGroup {
@@ -779,16 +795,15 @@ model ClobberPolicy {
 model ExamStat {
   id           String     @id @default(cuid())
   assignmentId String     @map("assignment_id")
-  userId       String?    @map("user_id")
+  userId       String     @map("user_id")
   mean         Float
   stdDev       Float      @map("std_dev")
-  source       String
-  edThreadId   String?    @map("ed_thread_id")
-  postedAt     DateTime   @default(now()) @map("posted_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
   assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  user         User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([assignmentId, source])
+  @@unique([assignmentId, userId])
   @@map("exam_stats")
 }
 

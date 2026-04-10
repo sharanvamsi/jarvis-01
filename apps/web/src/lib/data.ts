@@ -473,7 +473,7 @@ export async function getUserGradesWithOverrides(userId: string) {
                 overrides: {
                   where: { userId }
                 },
-                examStats: true,
+                examStats: { where: { userId } },
               },
               orderBy: { dueDate: 'asc' }
             },
@@ -587,7 +587,7 @@ export const getGradesPageData = cache(async (userId: string) => {
                 assignment: {
                   include: {
                     userAssignments: userId ? { where: { userId } } : true,
-                    examStats: true,
+                    examStats: { where: { userId } },
                   },
                 },
               },
@@ -666,6 +666,8 @@ export const getGradesPageData = cache(async (userId: string) => {
           ? {
               id: syllabus.id,
               isCurved: syllabus.isCurved,
+              isPointsBased: syllabus.isPointsBased,
+              totalPoints: syllabus.totalPoints,
               curveDescription: syllabus.curveDescription,
               confirmedAt: syllabus.confirmedAt?.toISOString() ?? null,
               componentGroups: syllabus.componentGroups.map((g) => ({
@@ -698,7 +700,6 @@ export const getGradesPageData = cache(async (userId: string) => {
                     assignmentId: m.assignmentId,
                     mean: m.assignment.examStats[0].mean,
                     stdDev: m.assignment.examStats[0].stdDev,
-                    source: m.assignment.examStats[0].source,
                   }))
               ),
             }
@@ -747,7 +748,7 @@ export const getSyllabusForCourse = cache(async (courseId: string, userId?: stri
                 assignment: {
                   include: {
                     userAssignments: userId ? { where: { userId } } : true,
-                    examStats: true,
+                    examStats: userId ? { where: { userId } } : true,
                   },
                 },
               },
@@ -789,9 +790,9 @@ export async function upsertExamStatManual(
 ) {
   try {
     return await db.examStat.upsert({
-      where: { assignmentId_source: { assignmentId, source: 'manual' } },
-      create: { assignmentId, mean, stdDev, source: 'manual', userId },
-      update: { mean, stdDev, userId },
+      where: { assignmentId_userId: { assignmentId, userId } },
+      create: { assignmentId, userId, mean, stdDev },
+      update: { mean, stdDev },
     })
   } catch (error) {
     console.error('[data] upsertExamStatManual error:', error)

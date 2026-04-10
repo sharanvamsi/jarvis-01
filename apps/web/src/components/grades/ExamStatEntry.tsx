@@ -5,7 +5,7 @@ import { useState } from 'react'
 interface Props {
   assignmentName: string
   assignmentId: string
-  existingStat?: { mean: number; stdDev: number; source: string } | null
+  existingStat?: { mean: number; stdDev: number } | null
   onSaved: (mean: number, stdDev: number) => void
 }
 
@@ -65,9 +65,6 @@ export default function ExamStatEntry({
       <div className="flex items-center gap-2">
         <span className="text-[11px] text-[#525252]">
           {'\u03BC'}={existingStat.mean} {'\u03C3'}={existingStat.stdDev}
-          {existingStat.source === 'ed' && (
-            <span className="ml-1 text-[#3B82F6]">from Ed</span>
-          )}
         </span>
         <button
           onClick={() => setEditing(true)}

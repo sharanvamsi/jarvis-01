@@ -32,3 +32,6 @@ yarn-error.log*
 
 # Runtime
 *.tsbuildinfo
+
+# Local script output (test crawler, etc.)
+apps/pipeline/output/

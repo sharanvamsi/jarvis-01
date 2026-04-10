@@ -2,11 +2,11 @@ import crypto from 'crypto';
 import { db } from '../lib/db';
 import type { Prisma } from '@jarvis/db';
 import { decrypt } from '../lib/crypto';
-import { fetchCanvasSyllabus, fetchWebsiteSyllabus } from '../lib/syllabus-fetcher';
+import { fetchCanvasSyllabus } from '../lib/syllabus-fetcher';
 import { extractSyllabus } from '../lib/syllabus-extractor';
 
 function hashText(text: string): string {
-  return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+  return crypto.createHash('sha256').update(text).digest('hex');
 }
 
 export async function syncSyllabus(userId: string): Promise<void> {
@@ -16,7 +16,11 @@ export async function syncSyllabus(userId: string): Promise<void> {
     where: { userId },
     include: {
       course: {
-        include: { syllabus: true },
+        include: {
+          syllabus: {
+            include: { document: true },
+          },
+        },
       },
     },
   });
@@ -44,25 +48,21 @@ export async function syncSyllabus(userId: string): Promise<void> {
       continue;
     }
 
-    console.log(`[syllabus] Fetching syllabus for ${course.courseCode}`);
-
-    let rawText: string | null = null;
-    let source: 'canvas' | 'website' = 'canvas';
-
-    // CS courses: try course website first
-    const isCS =
-      course.courseCode.startsWith('CS') ||
-      course.courseCode.startsWith('EECS') ||
-      course.courseCode.startsWith('DATA');
-
-    if (isCS && course.websiteUrl) {
-      rawText = await fetchWebsiteSyllabus(course.websiteUrl);
-      source = 'website';
+    // Skip if the course website worker already wrote grading policy —
+    // multi-page website extraction is higher quality than single-page Canvas HTML
+    if (course.syllabus?.document?.source === 'website') {
+      console.log(`[syllabus] Skipping ${course.courseCode} (website-extracted grading exists)`);
+      continue;
     }
 
-    if (!rawText && canvasToken && course.canvasId) {
+    console.log(`[syllabus] Fetching syllabus for ${course.courseCode}`);
+
+    // Website grading is handled by the course website worker (multi-page crawl).
+    // This worker only handles Canvas-sourced syllabi.
+    let rawText: string | null = null;
+
+    if (canvasToken && course.canvasId) {
       rawText = await fetchCanvasSyllabus(course.canvasId, canvasToken);
-      source = 'canvas';
     }
 
     if (!rawText) {
@@ -70,14 +70,12 @@ export async function syncSyllabus(userId: string): Promise<void> {
       continue;
     }
 
+    const newHash = hashText(rawText);
+
     // Content hash guard — skip LLM extraction if content unchanged
-    if (course.syllabus?.rawText) {
-      const newHash = hashText(rawText);
-      const existingHash = hashText(course.syllabus.rawText);
-      if (newHash === existingHash) {
-        console.log(`[syllabus] Skipping ${course.courseCode} (content unchanged)`);
-        continue;
-      }
+    if (course.syllabus?.document?.contentHash === newHash) {
+      console.log(`[syllabus] Skipping ${course.courseCode} (content unchanged)`);
+      continue;
     }
 
     // Extract structure via LLM
@@ -103,19 +101,32 @@ export async function syncSyllabus(userId: string): Promise<void> {
         where: { courseId: course.id },
         create: {
           courseId: course.id,
-          source,
-          rawText,
           isCurved: extracted.isCurved,
           curveDescription: extracted.curveDescription,
         },
         update: {
-          source,
-          rawText,
           isCurved: extracted.isCurved,
           curveDescription: extracted.curveDescription,
           extractedAt: new Date(),
           confirmedAt: null, // re-confirm if re-extracted
           confirmedBy: null,
+        },
+      });
+
+      // Upsert syllabus document (heavy raw text + content hash)
+      await tx.syllabusDocument.upsert({
+        where: { syllabusId: syllabus.id },
+        create: {
+          syllabusId: syllabus.id,
+          source: 'canvas_html',
+          rawText: rawText!,
+          contentHash: newHash,
+        },
+        update: {
+          source: 'canvas_html',
+          rawText: rawText!,
+          contentHash: newHash,
+          fetchedAt: new Date(),
         },
       });
 

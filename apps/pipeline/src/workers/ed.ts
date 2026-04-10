@@ -288,11 +288,6 @@ export async function runEdSync(userId: string): Promise<void> {
           }
         }
 
-        // Flag threads that likely contain exam stats for manual entry
-        await flagExamStatThreads(course.id, threads).catch((e: any) =>
-          console.error(`[ed] Exam stat flagging failed for ${course.courseCode}:`, e.message)
-        );
-
         console.log(
           `[ed] ${course.courseCode}: done. ` +
             `${recordsCreated} created, ${recordsUpdated} updated`
@@ -355,69 +350,3 @@ export async function runEdSync(userId: string): Promise<void> {
   }
 }
 
-// Detects threads that likely contain exam statistics and returns
-// the exam name + thread URL so the web app can prompt manual entry
-async function flagExamStatThreads(
-  courseId: string,
-  threads: EdThreadData[],
-): Promise<void> {
-  const examAssignments = await db.assignment.findMany({
-    where: { courseId, assignmentType: 'exam' },
-    include: { examStats: true },
-  });
-  if (examAssignments.length === 0) return;
-
-  for (const thread of threads) {
-    const title = (thread.title ?? '').toLowerCase();
-    const contentPreview = extractContentPreview(
-      thread.document ?? '',
-    ).toLowerCase();
-    const combined = `${title} ${contentPreview}`;
-
-    // Must mention exam AND score/grade release
-    const isExamThread =
-      /midterm|final|exam|quiz|mt\s*[12]/.test(combined);
-    const isStatRelease =
-      /scores released|scores are (up|out|available)|graded|grade release|distribution|statistics|stats/
-        .test(combined);
-
-    if (!isExamThread || !isStatRelease) continue;
-
-    // Match to assignment
-    const matched = examAssignments.find((a: typeof examAssignments[number]) => {
-      const name = a.name.toLowerCase();
-      return (
-        ((title.includes('midterm 1') || title.includes('mt1') || title.includes('mt 1')) &&
-          (name.includes('midterm 1') || name.includes('mt1'))) ||
-        ((title.includes('midterm 2') || title.includes('mt2') || title.includes('mt 2')) &&
-          (name.includes('midterm 2') || name.includes('mt2'))) ||
-        (title.includes('final') && name.includes('final')) ||
-        (title.includes('quiz') && name.includes('quiz'))
-      );
-    });
-
-    if (!matched) continue;
-
-    // Only flag if no stats exist yet for this assignment
-    if (matched.examStats && matched.examStats.length > 0) continue;
-
-    // Store the Ed thread ID on the assignment so the web app
-    // can show "Stats posted on Ed — click to enter"
-    const edThreadId = thread.id?.toString() ?? '';
-    if (!edThreadId) continue;
-
-    const existingIds = matched.edThreadIds ?? [];
-    if (existingIds.includes(edThreadId)) continue;
-
-    await db.assignment.update({
-      where: { id: matched.id },
-      data: {
-        edThreadIds: {
-          push: edThreadId,
-        },
-      },
-    }).catch(() => {}); // ignore if edThreadIds doesn't support push
-
-    console.log(`[ed] Flagged exam stat thread for ${matched.name}: "${thread.title}"`);
-  }
-}

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
@@ -24,19 +25,36 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const syllabus = await db.syllabus.upsert({
-      where: { courseId },
-      create: {
-        courseId,
-        source: 'upload',
-        rawText,
-      },
-      update: {
-        source: 'upload',
-        rawText,
-        confirmedAt: null,
-        confirmedBy: null,
-      },
+    const contentHash = crypto.createHash('sha256').update(rawText).digest('hex');
+
+    const syllabus = await db.$transaction(async (tx) => {
+      const s = await tx.syllabus.upsert({
+        where: { courseId },
+        create: { courseId },
+        update: {
+          confirmedAt: null,
+          confirmedBy: null,
+          extractedAt: new Date(),
+        },
+      });
+
+      await tx.syllabusDocument.upsert({
+        where: { syllabusId: s.id },
+        create: {
+          syllabusId: s.id,
+          source: 'upload',
+          rawText,
+          contentHash,
+        },
+        update: {
+          source: 'upload',
+          rawText,
+          contentHash,
+          fetchedAt: new Date(),
+        },
+      });
+
+      return s;
     });
 
     return NextResponse.json({ success: true, syllabusId: syllabus.id });

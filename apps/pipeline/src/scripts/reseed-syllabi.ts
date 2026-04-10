@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { db } from '../lib/db';
 import { extractSyllabus } from '../lib/syllabus-extractor';
 import { matchAssignmentsToGroups } from '../lib/assignment-matcher';
@@ -69,13 +70,20 @@ async function reseedSyllabus(
     const syllabus = await tx.syllabus.create({
       data: {
         courseId: course.id,
-        source: 'manual',
-        rawText: syllabusText,
         isCurved: extracted.isCurved,
         curveDescription: extracted.curveDescription,
         // Auto-confirm since we manually verified this data
         confirmedAt: new Date(),
         confirmedBy: 'system',
+      }
+    });
+
+    await tx.syllabusDocument.create({
+      data: {
+        syllabusId: syllabus.id,
+        source: 'manual',
+        rawText: syllabusText,
+        contentHash: crypto.createHash('sha256').update(syllabusText).digest('hex'),
       }
     });
 

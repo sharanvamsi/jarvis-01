@@ -6,11 +6,12 @@ import type { GroupBreakdown } from '@/lib/projection'
 interface Props {
   breakdown: GroupBreakdown[]
   method: 'weighted' | 'curved'
+  isPointsBased?: boolean
   expanded: boolean
   onToggle: () => void
 }
 
-export default function GradeBreakdown({ breakdown, method, expanded, onToggle }: Props) {
+export default function GradeBreakdown({ breakdown, method, isPointsBased, expanded, onToggle }: Props) {
 
   if (breakdown.length === 0) return null
 
@@ -33,7 +34,9 @@ export default function GradeBreakdown({ breakdown, method, expanded, onToggle }
       {expanded && (
         <div className="border-t border-[#1F1F1F]">
           {breakdown.map((group) => {
-            const weightPct = (group.weight * 100).toFixed(0)
+            const weightLabel = isPointsBased
+              ? `${group.weight} pts`
+              : `${(group.weight * 100).toFixed(0)}%`
             const hasScore = group.score !== null
 
             return (
@@ -84,8 +87,8 @@ export default function GradeBreakdown({ breakdown, method, expanded, onToggle }
                         </span>
                       )}
                     </div>
-                    <span className="text-xs text-[#525252] w-8 text-right">
-                      {weightPct}%
+                    <span className={`text-xs text-[#525252] text-right ${isPointsBased ? 'w-14' : 'w-8'}`}>
+                      {weightLabel}
                     </span>
                   </div>
                 </div>

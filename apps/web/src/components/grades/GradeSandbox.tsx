@@ -49,6 +49,8 @@ type SyllabusComponentGroup = {
 type SyllabusData = {
   id: string
   isCurved: boolean
+  isPointsBased: boolean
+  totalPoints: number | null
   curveDescription: string | null
   confirmedAt: string | null
   componentGroups: SyllabusComponentGroup[]
@@ -68,7 +70,6 @@ type SyllabusData = {
     assignmentId: string
     mean: number
     stdDev: number
-    source: string
   }[]
 }
 
@@ -195,11 +196,11 @@ export default function GradeSandbox({
 
   // Local exam stats (updated from manual entry)
   const [localExamStats, setLocalExamStats] = useState<
-    Record<string, { mean: number; stdDev: number; source: string }>
+    Record<string, { mean: number; stdDev: number }>
   >(() => {
-    const init: Record<string, { mean: number; stdDev: number; source: string }> = {}
+    const init: Record<string, { mean: number; stdDev: number }> = {}
     for (const es of syllabus?.examStats ?? []) {
-      init[es.assignmentId] = es
+      init[es.assignmentId] = { mean: es.mean, stdDev: es.stdDev }
     }
     return init
   })
@@ -222,7 +223,7 @@ export default function GradeSandbox({
     (assignmentId: string, mean: number, stdDev: number) => {
       setLocalExamStats((prev) => ({
         ...prev,
-        [assignmentId]: { mean, stdDev, source: 'manual' },
+        [assignmentId]: { mean, stdDev },
       }))
     },
     []
@@ -297,6 +298,8 @@ export default function GradeSandbox({
 
     return computeProjection({
       isCurved: syllabus.isCurved,
+      isPointsBased: syllabus.isPointsBased,
+      totalPoints: syllabus.totalPoints,
       groups,
       clobberPolicies: syllabus.clobberPolicies,
       gradeScale: syllabus.gradeScale.length > 0 ? syllabus.gradeScale : null,
@@ -496,6 +499,7 @@ export default function GradeSandbox({
         <GradeBreakdown
           breakdown={projection.breakdown}
           method={projection.method}
+          isPointsBased={syllabus?.isPointsBased}
           expanded={breakdownExpanded}
           onToggle={onBreakdownToggle}
         />

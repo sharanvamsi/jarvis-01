@@ -3,11 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Loader2, Settings, ArrowRight, Check } from 'lucide-react';
+import { Loader2, Settings, ArrowRight, Check, Globe } from 'lucide-react';
 import { SignInButton } from '@/components/auth/SignInButton';
 import CourseSelectionList, { type CourseCandidate } from '@/components/settings/CourseSelectionList';
 
-type Step = 'signin' | 'canvas' | 'courses' | 'done';
+type Step = 'signin' | 'canvas' | 'courses' | 'websites' | 'done';
 
 export default function Onboarding() {
   const [step, setStep] = useState<Step>('signin');
@@ -26,13 +26,18 @@ export default function Onboarding() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [savingCourses, setSavingCourses] = useState(false);
 
+  // Website URL state
+  const [createdCourses, setCreatedCourses] = useState<{id: string; courseCode: string; courseName: string}[]>([]);
+  const [websiteUrls, setWebsiteUrls] = useState<Record<string, string>>({});
+  const [savingWebsites, setSavingWebsites] = useState(false);
+
   useEffect(() => {
     if (status === 'authenticated' && step === 'signin') {
       setStep('canvas');
     }
   }, [status, step]);
 
-  const stepIndex = { signin: 0, canvas: 1, courses: 2, done: 3 };
+  const stepIndex = { signin: 0, canvas: 1, courses: 2, websites: 3, done: 4 };
   const firstName = session?.user?.name?.split(' ')[0] ?? 'there';
 
   // ── Step 2: Save Canvas token ──────────────────────────────
@@ -75,7 +80,7 @@ export default function Onboarding() {
     setError(null);
     try {
       const selectedCourses = courses.filter(c => selectedIds.includes(c.canvasId));
-      const res = await fetch('/api/onboarding/complete', {
+      const res = await fetch('/api/onboarding/create-courses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -91,7 +96,13 @@ export default function Onboarding() {
       if (!res.ok) {
         throw new Error(data?.error ?? 'Failed to save selected courses');
       }
-      setStep('done');
+      // Store created courses for the website URL step
+      const created = data?.courses ?? [];
+      setCreatedCourses(created);
+      const initUrls: Record<string, string> = {};
+      for (const c of created) initUrls[c.id] = '';
+      setWebsiteUrls(initUrls);
+      setStep('websites');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save selected courses');
     } finally {
@@ -99,9 +110,37 @@ export default function Onboarding() {
     }
   }
 
-  // ── Step 4: Complete onboarding ────────────────────────────
+  // ── Step 4: Save website URLs ─────────────────────────────
+  async function handleSaveWebsites() {
+    setSavingWebsites(true);
+    setError(null);
+    try {
+      const entries = Object.entries(websiteUrls).filter(([, url]) => url.trim());
+      await Promise.allSettled(
+        entries.map(([courseId, url]) =>
+          fetch(`/api/courses/${courseId}/website`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: url.trim() }),
+          })
+        )
+      );
+      setStep('done');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save website URLs');
+    } finally {
+      setSavingWebsites(false);
+    }
+  }
+
+  // ── Step 5: Complete onboarding ────────────────────────────
   async function handleFinish(destination: '/settings' | '/' | '/syncing') {
     setIsLoading(true);
+    try {
+      await fetch('/api/onboarding/complete', { method: 'POST' });
+    } catch {
+      // Best-effort — don't block navigation
+    }
     router.push(destination);
   }
 
@@ -120,7 +159,7 @@ export default function Onboarding() {
 
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          {[0, 1, 2, 3].map((i) => (
+          {[0, 1, 2, 3, 4].map((i) => (
             <div
               key={i}
               className={`w-2 h-2 rounded-full transition-colors ${
@@ -284,7 +323,64 @@ export default function Onboarding() {
             </div>
           )}
 
-          {/* ── STEP 4: Done ─────────────────────────────── */}
+          {/* ── STEP 4: Website URLs ───────────────────── */}
+          {step === 'websites' && (
+            <div>
+              <h2 className="text-[#F5F5F5] text-2xl font-medium mb-1">
+                Add course websites
+              </h2>
+              <p className="text-[#A3A3A3] text-sm mb-5">
+                If your courses have dedicated websites, add them here. We&apos;ll sync assignments, office hours, and staff info.
+              </p>
+
+              {createdCourses.length > 0 && (
+                <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1 -mr-1">
+                  {createdCourses.map((course) => (
+                    <div key={course.id}>
+                      <label className="text-[#F5F5F5] text-xs font-medium flex items-center gap-1.5 mb-1">
+                        <Globe className="w-3 h-3 text-[#525252]" />
+                        {course.courseCode}
+                      </label>
+                      <input
+                        type="url"
+                        value={websiteUrls[course.id] ?? ''}
+                        onChange={(e) =>
+                          setWebsiteUrls((prev) => ({ ...prev, [course.id]: e.target.value }))
+                        }
+                        placeholder="https://cs61b.org"
+                        className="w-full bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[#F5F5F5] text-sm px-3 py-2 placeholder-[#525252] outline-none focus:border-blue-500 transition-colors"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {error && (
+                <p className="text-red-400 text-xs mt-3">{error}</p>
+              )}
+
+              <button
+                onClick={handleSaveWebsites}
+                disabled={savingWebsites}
+                className="w-full mt-4 bg-[#3B82F6] hover:bg-[#2563EB] disabled:bg-[#1F1F1F] disabled:text-[#525252] text-white font-medium py-2.5 px-4 rounded transition-colors flex items-center justify-center gap-2"
+              >
+                {savingWebsites ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</>
+                ) : (
+                  'Continue'
+                )}
+              </button>
+
+              <button
+                onClick={() => setStep('done')}
+                className="w-full text-[#525252] hover:text-[#A3A3A3] text-xs py-2 mt-2 transition-colors"
+              >
+                Skip for now
+              </button>
+            </div>
+          )}
+
+          {/* ── STEP 5: Done ─────────────────────────────── */}
           {step === 'done' && (
             <div>
               <div className="flex items-center gap-2 mb-2">

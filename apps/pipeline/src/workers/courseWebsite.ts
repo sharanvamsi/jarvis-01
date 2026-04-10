@@ -1,215 +1,20 @@
-// Course website scraper uses Claude Haiku for LLM extraction
-// Extracts: assignments, office hours, staff, exams, syllabus weeks
-// SHA-256 content hash prevents unnecessary LLM calls
+// Course website worker — multi-page crawl + Haiku tool_use extraction.
+//
+// Crawls root URL + same-origin links one level deep, cleans HTML to
+// hash-stable markdown, runs 5 split Haiku calls to extract structured
+// course data, writes to DB.
+//
+// Data is course-scoped (global) — one crawl per course serves all users.
+// SHA-256 combined content hash prevents unnecessary LLM calls.
 
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import { db } from '../lib/db';
 import type { Prisma } from '@jarvis/db';
-import { filterByUserSelection } from '../lib/enrollment-filter';
+import { crawlSite } from '../lib/website-crawler';
+import { extractCourseData, type ExtractionResult } from '../lib/course-extractor';
 
 const THRESHOLD_HOURS = 24;
-const LLM_MODEL = 'claude-haiku-4-5-20251001';
-const FETCH_TIMEOUT_MS = 15000;
-const FETCH_RETRIES = 3;
 const CURRENT_YEAR = new Date().getFullYear();
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-
-// Known course website URLs
-const KNOWN_URLS: Record<string, string> = {
-  'CS 162': 'https://cs162.org',
-  'CS 189': 'https://eecs189.org/sp26',
-};
-
-interface ScrapedAssignment {
-  name: string;
-  type: 'homework' | 'project' | 'lab' | 'exam' | 'other';
-  due_date: string | null;
-  release_date: string | null;
-  spec_url: string | null;
-}
-
-interface ScrapedOfficeHour {
-  staff_name: string;
-  staff_role: 'professor' | 'ta' | 'tutor' | 'other';
-  day_of_week: number; // 0=Sun, 1=Mon...6=Sat
-  start_time: string;  // "14:00"
-  end_time: string;    // "16:00"
-  location: string | null;
-  zoom_link: string | null;
-}
-
-interface ScrapedStaff {
-  name: string;
-  role: string;
-  email: string | null;
-  photo_url: string | null;
-}
-
-interface ScrapedExam {
-  name: string;
-  date: string | null;    // "YYYY-MM-DD"
-  time: string | null;    // "7:00 PM - 9:00 PM"
-  location: string | null;
-}
-
-interface ScrapedSyllabusWeek {
-  week_num: number;
-  topic: string;
-  start_date: string | null;
-  readings: string | null;
-}
-
-interface ScrapedCourseData {
-  assignments: ScrapedAssignment[];
-  office_hours: ScrapedOfficeHour[];
-  staff: ScrapedStaff[];
-  exams: ScrapedExam[];
-  syllabus_weeks: ScrapedSyllabusWeek[];
-}
-
-function hashContent(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
-
-async function fetchWithRetry(
-  url: string,
-  retries = FETCH_RETRIES
-): Promise<string> {
-  let lastError: Error | null = null;
-  for (let i = 0; i < retries; i++) {
-    try {
-      if (i > 0) {
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
-      }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-        },
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.text();
-    } catch (err) {
-      lastError = err as Error;
-      console.warn(`[website] Fetch attempt ${i + 1} failed: ${lastError.message}`);
-    }
-  }
-  throw lastError ?? new Error('Fetch failed');
-}
-
-function filterHtmlToMarkdown(html: string): string {
-  let filtered = html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
-    .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
-
-  // Convert common elements to text, preserving links
-  filtered = filtered
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/tr>/gi, '\n')
-    .replace(/<\/td>/gi, ' | ')
-    .replace(/<\/th>/gi, ' | ')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 ($1)')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .replace(/\n\s+/g, '\n')
-    .trim();
-
-  return filtered.slice(0, 12000);
-}
-
-async function extractWithLLM(
-  courseCode: string,
-  courseUrl: string,
-  markdown: string
-): Promise<ScrapedCourseData> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-
-  const systemPrompt = `You are extracting structured course data from a Berkeley course website.
-Return ONLY a valid JSON object with NO preamble, NO markdown, NO backticks.
-The JSON must have these exact keys:
-{
-  "assignments": [...],
-  "office_hours": [...],
-  "staff": [...],
-  "exams": [...],
-  "syllabus_weeks": [...]
-}
-
-For assignments: { name, type (homework/project/lab/exam/other), due_date (YYYY-MM-DD or null), release_date (YYYY-MM-DD or null), spec_url (full https:// URL or null) }
-Only include assignments for year ${CURRENT_YEAR}. Reject dates from other years.
-If spec_url is a relative path, prepend the base URL: ${courseUrl}
-
-For office_hours: { staff_name, staff_role (professor/ta/tutor/other), day_of_week (0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat), start_time ("HH:MM" 24hr), end_time ("HH:MM" 24hr), location (room or null), zoom_link (https:// or null) }
-
-For staff: { name, role, email (or null), photo_url (full https:// URL or null) }
-
-For exams: { name, date (YYYY-MM-DD or null), time ("H:MM PM - H:MM PM" or null), location (or null) }
-
-For syllabus_weeks: { week_num (integer), topic, start_date (YYYY-MM-DD or null), readings (or null) }
-
-If you cannot find data for a category, return an empty array for it.
-Only return the JSON object, nothing else.`;
-
-  const userMessage = `Extract all course data from this ${courseCode} website (${courseUrl}):\n\n${markdown}`;
-
-  const response = await fetch(ANTHROPIC_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: LLM_MODEL,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Anthropic API error: ${response.status} ${err}`);
-  }
-
-  const data = await response.json() as { content: Array<{ text: string }> };
-  const text = data.content?.[0]?.text ?? '';
-
-  try {
-    const cleaned = text
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    return JSON.parse(cleaned) as ScrapedCourseData;
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      return JSON.parse(match[0]) as ScrapedCourseData;
-    }
-    console.error('[website] Failed to parse LLM response:', text.slice(0, 200));
-    return {
-      assignments: [], office_hours: [], staff: [],
-      exams: [], syllabus_weeks: [],
-    };
-  }
-}
 
 function formatTime(time24: string): string {
   const [h, m] = time24.split(':').map(Number);
@@ -218,17 +23,15 @@ function formatTime(time24: string): string {
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
-async function writeScrapedData(
-  userId: string,
+async function writeExtractionData(
   courseId: string,
-  courseCode: string,
-  data: ScrapedCourseData,
-  now: Date
-): Promise<{ assignments: number; officeHours: number; staff: number; exams: number; syllabusWeeks: number }> {
-  // --- Validate and prepare all data before the transaction ---
-
-  // ASSIGNMENTS
-  const validAssignments = data.assignments.filter(a => {
+  courseUrl: string,
+  extraction: ExtractionResult,
+  combinedHash: string,
+  now: Date,
+): Promise<{ assignments: number; officeHours: number; staff: number; exams: number; syllabusWeeks: number; gradingPolicy: boolean }> {
+  // --- Validate assignments ---
+  const validAssignments = extraction.assignments.filter((a) => {
     if (!a.name) return false;
     if (a.due_date) {
       const year = parseInt(a.due_date.split('-')[0]);
@@ -243,10 +46,8 @@ async function writeScrapedData(
     return true;
   });
 
-  const assignmentRows = validAssignments.map(a => ({
-    userId,
+  const assignmentRows = validAssignments.map((a) => ({
     courseId,
-    courseName: courseCode,
     name: a.name,
     specUrl: a.spec_url,
     dueDate: a.due_date ? new Date(a.due_date) : null,
@@ -256,8 +57,8 @@ async function writeScrapedData(
     syncedAt: now,
   }));
 
-  // OFFICE HOURS
-  const validOH = data.office_hours.filter(oh => {
+  // --- Validate office hours ---
+  const validOH = extraction.office_hours.filter((oh) => {
     if (!oh.staff_name) return false;
     if (oh.day_of_week < 0 || oh.day_of_week > 6) return false;
     if (!oh.start_time || !oh.end_time) return false;
@@ -267,7 +68,7 @@ async function writeScrapedData(
     return true;
   });
 
-  const officeHourRows = validOH.map(oh => ({
+  const officeHourRows = validOH.map((oh) => ({
     courseId,
     staffName: oh.staff_name,
     staffRole: oh.staff_role,
@@ -279,10 +80,9 @@ async function writeScrapedData(
     isRecurring: true,
   }));
 
-  // STAFF
-  const validStaff = data.staff.filter(s => !!s.name);
-
-  const staffRows = validStaff.map(s => ({
+  // --- Validate staff ---
+  const validStaff = extraction.staff.filter((s) => !!s.name);
+  const staffRows = validStaff.map((s) => ({
     courseId,
     name: s.name,
     role: s.role ?? 'staff',
@@ -290,30 +90,46 @@ async function writeScrapedData(
     photoUrl: s.photo_url,
   }));
 
-  // EXAMS
-  const validExams = data.exams.filter(e => !!e.name);
-
-  const examRows = validExams.map(e => {
+  // --- Validate exams ---
+  const validExams = extraction.exams.filter((e) => !!e.name);
+  const examRows = validExams.map((e) => {
     let examDate: Date | null = null;
     if (e.date) {
       try { examDate = new Date(e.date); } catch { examDate = null; }
     }
-    return {
-      courseId,
-      name: e.name,
-      date: examDate,
-      location: e.location,
-    };
+    return { courseId, name: e.name, date: examDate, location: e.location };
   });
 
-  // --- Atomic transaction: delete all then createMany ---
+  // --- Validate syllabus weeks ---
+  const syllabusWeekRows = extraction.syllabus_weeks
+    .filter((w) => w.topic && w.week_num > 0)
+    .map((w) => ({
+      courseId,
+      weekNum: w.week_num,
+      topic: w.topic,
+      startDate: w.start_date ? new Date(w.start_date) : null,
+      readings: w.readings,
+    }));
+
+  // --- Grading policy ---
+  const gp = extraction.grading_policy;
+
+  // Check if grading is already user-confirmed — don't overwrite manual/confirmed weights
+  const existingSyllabus = await db.syllabus.findUnique({
+    where: { courseId },
+    select: { confirmedAt: true },
+  });
+  const gradingConfirmed = !!existingSyllabus?.confirmedAt;
+
+  // --- Atomic transaction ---
   await db.$transaction(async (tx: Prisma.TransactionClient) => {
-    // Delete all existing data for this course/user
-    await tx.rawCourseWebsiteAssignment.deleteMany({ where: { userId, courseId } });
+    // Delete + recreate course website data
+    await tx.rawCourseWebsiteAssignment.deleteMany({ where: { courseId } });
     await tx.officeHour.deleteMany({ where: { courseId } });
     await tx.courseStaff.deleteMany({ where: { courseId } });
     await tx.exam.deleteMany({ where: { courseId } });
-    // Bulk insert all new data
+    await tx.syllabusWeek.deleteMany({ where: { courseId } });
+
     if (assignmentRows.length > 0) {
       await tx.rawCourseWebsiteAssignment.createMany({ data: assignmentRows, skipDuplicates: true });
     }
@@ -326,6 +142,114 @@ async function writeScrapedData(
     if (examRows.length > 0) {
       await tx.exam.createMany({ data: examRows });
     }
+    if (syllabusWeekRows.length > 0) {
+      await tx.syllabusWeek.createMany({ data: syllabusWeekRows, skipDuplicates: true });
+    }
+
+    // Write grading policy to Syllabus tables (skip if user already confirmed)
+    if (gp && !gradingConfirmed) {
+      const syllabus = await tx.syllabus.upsert({
+        where: { courseId },
+        create: {
+          courseId,
+          isCurved: gp.is_curved,
+          curveDescription: gp.curve_description,
+          isPointsBased: gp.is_points_based,
+          totalPoints: gp.total_points,
+        },
+        update: {
+          isCurved: gp.is_curved,
+          curveDescription: gp.curve_description,
+          isPointsBased: gp.is_points_based,
+          totalPoints: gp.total_points,
+          extractedAt: now,
+          confirmedAt: null,
+          confirmedBy: null,
+        },
+      });
+
+      await tx.syllabusDocument.upsert({
+        where: { syllabusId: syllabus.id },
+        create: {
+          syllabusId: syllabus.id,
+          source: 'website',
+          sourceUrl: courseUrl,
+          rawText: '',
+          contentHash: combinedHash,
+        },
+        update: {
+          source: 'website',
+          sourceUrl: courseUrl,
+          contentHash: combinedHash,
+          fetchedAt: now,
+        },
+      });
+
+      // Recreate component groups, grade scale, clobber policies
+      await tx.componentGroup.deleteMany({ where: { syllabusId: syllabus.id } });
+      await tx.gradeScale.deleteMany({ where: { syllabusId: syllabus.id } });
+      await tx.clobberPolicy.deleteMany({ where: { syllabusId: syllabus.id } });
+
+      for (const group of gp.component_groups) {
+        await tx.componentGroup.create({
+          data: {
+            syllabusId: syllabus.id,
+            name: group.name,
+            weight: group.weight,
+            dropLowest: group.drop_lowest,
+            isBestOf: group.is_best_of,
+            isExam: group.is_exam,
+          },
+        });
+      }
+
+      if (gp.grade_scale) {
+        await tx.gradeScale.createMany({
+          data: gp.grade_scale.map((gs) => ({
+            syllabusId: syllabus.id,
+            letter: gs.letter,
+            minScore: gs.min_score,
+            maxScore: gs.max_score,
+            isPoints: gs.is_points,
+          })),
+        });
+      }
+
+      // Create clobber policies and resolve FK references
+      const createdPolicies = [];
+      for (const policy of gp.clobber_policies) {
+        const created = await tx.clobberPolicy.create({
+          data: {
+            syllabusId: syllabus.id,
+            sourceName: policy.source_name,
+            targetName: policy.target_name,
+            comparisonType: policy.comparison_type,
+            conditionText: policy.condition_text,
+          },
+        });
+        createdPolicies.push(created);
+      }
+
+      if (createdPolicies.length > 0) {
+        const createdGroups = await tx.componentGroup.findMany({
+          where: { syllabusId: syllabus.id },
+          select: { id: true, name: true },
+        });
+        const groupByName = Object.fromEntries(
+          createdGroups.map((g) => [g.name.toLowerCase().trim(), g.id]),
+        );
+        for (const policy of createdPolicies) {
+          const sourceId = groupByName[policy.sourceName.toLowerCase().trim()];
+          const targetId = groupByName[policy.targetName.toLowerCase().trim()];
+          if (sourceId && targetId) {
+            await tx.clobberPolicy.update({
+              where: { id: policy.id },
+              data: { sourceGroupId: sourceId, targetGroupId: targetId },
+            });
+          }
+        }
+      }
+    }
   });
 
   return {
@@ -333,7 +257,8 @@ async function writeScrapedData(
     officeHours: officeHourRows.length,
     staff: staffRows.length,
     exams: examRows.length,
-    syllabusWeeks: 0,
+    syllabusWeeks: syllabusWeekRows.length,
+    gradingPolicy: !!gp && !gradingConfirmed,
   };
 }
 
@@ -346,42 +271,19 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
     return;
   }
 
-  // Get enrolled courses with website URLs (respect user selection)
-  const allEnrollments = await db.enrollment.findMany({
+  // Get all enrolled courses with website URLs (no user-selection filter — data is global)
+  const enrollments = await db.enrollment.findMany({
     where: { userId },
     include: {
       course: {
-        select: {
-          id: true,
-          courseCode: true,
-          websiteUrl: true,
-        },
+        select: { id: true, courseCode: true, websiteUrl: true },
       },
     },
   });
 
-  const enrollments = filterByUserSelection(allEnrollments);
   const coursesToSync = enrollments
-    .map((e: typeof enrollments[number]) => e.course)
-    .filter((c: { id: string; courseCode: string | null; websiteUrl: string | null }) => {
-      const url = c.websiteUrl ?? KNOWN_URLS[c.courseCode ?? ''];
-      return !!url;
-    })
-    .map((c: { id: string; courseCode: string | null; websiteUrl: string | null }) => ({
-      ...c,
-      websiteUrl: c.websiteUrl ?? KNOWN_URLS[c.courseCode ?? ''] ?? null,
-    }));
-
-  // Update course URLs in DB if missing
-  for (const c of coursesToSync) {
-    const knownUrl = KNOWN_URLS[c.courseCode ?? ''];
-    if (knownUrl && !c.websiteUrl) {
-      await db.course.update({
-        where: { id: c.id },
-        data: { websiteUrl: knownUrl },
-      }).catch(() => {});
-    }
-  }
+    .map((e) => e.course)
+    .filter((c) => !!c.websiteUrl);
 
   console.log(`[website] Found ${coursesToSync.length} courses with websites`);
 
@@ -417,13 +319,17 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
         }
       }
 
-      // Fetch the website
-      const html = await fetchWithRetry(url);
-      const markdown = filterHtmlToMarkdown(html);
-      const contentHash = hashContent(markdown);
+      // Crawl the website (multi-page)
+      const { results: crawled, summary } = await crawlSite(url);
 
-      // Skip LLM if content unchanged
-      if (existing?.contentHash === contentHash) {
+      console.log(
+        `[website] ${code}: crawled ${summary.total} pages — ` +
+          `${summary.ok} ok, ${summary.failed} failed, ` +
+          `${summary.jsShellSuspected} js-shell, ${summary.authWalled} auth-walled`,
+      );
+
+      // Skip LLM if combined content hash unchanged
+      if (existing?.contentHash === summary.combinedContentHash) {
         console.log(`[website] ${code}: content unchanged, skipping LLM`);
         await db.rawCourseWebsitePageHash.update({
           where: { courseId: course.id },
@@ -432,49 +338,61 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
         continue;
       }
 
-      console.log(`[website] ${code}: content changed, extracting with LLM...`);
+      // Filter to extractable pages
+      const extractablePages = crawled
+        .filter((c) => c.status === 'ok' || c.status === 'js-shell-suspected')
+        .filter((c) => c.markdown.length > 0)
+        .map((c) => ({ url: c.url, markdown: c.markdown }));
 
-      // Extract with Claude Haiku
-      const scraped = await extractWithLLM(code, url, markdown);
+      if (extractablePages.length === 0) {
+        console.warn(`[website] ${code}: no extractable pages, skipping LLM`);
+        await db.rawCourseWebsitePageHash.upsert({
+          where: { courseId: course.id },
+          update: { contentHash: summary.combinedContentHash, lastChecked: now, lastChanged: now },
+          create: { courseId: course.id, contentHash: summary.combinedContentHash, lastChecked: now, lastChanged: now },
+        });
+        continue;
+      }
+
+      // Extract with Haiku
+      console.log(`[website] ${code}: content changed, extracting with LLM (${extractablePages.length} pages)...`);
+      const extraction = await extractCourseData(extractablePages, url);
 
       console.log(
-        `[website] ${code}: extracted - ` +
-        `${scraped.assignments.length} assignments, ` +
-        `${scraped.office_hours.length} OH slots, ` +
-        `${scraped.staff.length} staff, ` +
-        `${scraped.exams.length} exams, ` +
-        `${scraped.syllabus_weeks.length} syllabus weeks`
+        `[website] ${code}: extracted — ` +
+          `${extraction.assignments.length} assignments, ` +
+          `${extraction.office_hours.length} OH, ` +
+          `${extraction.staff.length} staff, ` +
+          `${extraction.exams.length} exams, ` +
+          `${extraction.syllabus_weeks.length} syllabus weeks` +
+          `${extraction.grading_policy ? ', grading policy' : ''}` +
+          ` ($${extraction.extraction_meta.total_cost_usd.toFixed(4)})`,
       );
 
       // Write to DB
-      const counts = await writeScrapedData(userId, course.id, code, scraped, now);
-      totalCreated += Object.values(counts).reduce((a, b) => a + b, 0);
+      const counts = await writeExtractionData(
+        course.id, url, extraction, summary.combinedContentHash, now,
+      );
+      totalCreated += counts.assignments + counts.officeHours + counts.staff +
+        counts.exams + counts.syllabusWeeks;
 
       // Update page hash
       await db.rawCourseWebsitePageHash.upsert({
         where: { courseId: course.id },
-        update: {
-          contentHash,
-          lastChecked: now,
-          lastChanged: now,
-        },
-        create: {
-          courseId: course.id,
-          contentHash,
-          lastChecked: now,
-          lastChanged: now,
-        },
+        update: { contentHash: summary.combinedContentHash, lastChecked: now, lastChanged: now },
+        create: { courseId: course.id, contentHash: summary.combinedContentHash, lastChecked: now, lastChanged: now },
       });
 
       console.log(
-        `[website] ${code}: done - ` +
-        `${counts.assignments} assignments, ` +
-        `${counts.officeHours} OH, ${counts.staff} staff, ` +
-        `${counts.exams} exams, ${counts.syllabusWeeks} syllabus weeks`
+        `[website] ${code}: done — ` +
+          `${counts.assignments} assignments, ${counts.officeHours} OH, ` +
+          `${counts.staff} staff, ${counts.exams} exams, ` +
+          `${counts.syllabusWeeks} syllabus weeks` +
+          `${counts.gradingPolicy ? ', grading policy' : ''}`,
       );
 
       // Delay between courses
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[website] ${code} failed:`, msg);

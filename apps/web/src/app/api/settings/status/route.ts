@@ -9,7 +9,7 @@ export async function GET() {
   }
   const userId = session.user.id;
 
-  const [tokens, googleAccount, recentLogs, user] = await Promise.all([
+  const [tokens, googleAccount, recentLogs] = await Promise.all([
     db.syncToken.findMany({
       where: { userId },
       select: { service: true, userExpiresAt: true },
@@ -30,10 +30,6 @@ export async function GET() {
         recordsFetched: true,
         startedAt: true,
       },
-    }),
-    db.user.findUnique({
-      where: { id: userId },
-      select: { gradescopeConnected: true },
     }),
   ]);
 
@@ -66,10 +62,7 @@ export async function GET() {
     isRunning,
     canvas: serviceStatus('canvas'),
     ed: serviceStatus('ed'),
-    gradescope: {
-      ...serviceStatus('gradescope'),
-      gradescopeConnected: user?.gradescopeConnected ?? false,
-    },
+    gradescope: serviceStatus('gradescope'),
     google: {
       connected: !!googleAccount,
       hasCalendarScope: googleAccount?.scope?.includes('calendar') ?? false,

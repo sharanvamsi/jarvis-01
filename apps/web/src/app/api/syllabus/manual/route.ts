@@ -35,15 +35,12 @@ export async function POST(req: NextRequest) {
         where: { courseId },
         create: {
           courseId,
-          source: 'manual',
-          rawText: '',
           isCurved,
           curveDescription,
           confirmedAt: new Date(),
           confirmedBy: session.user.id,
         },
         update: {
-          source: 'manual',
           isCurved,
           curveDescription,
           confirmedAt: new Date(),

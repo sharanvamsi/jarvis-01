@@ -48,6 +48,8 @@ type SyllabusComponentGroup = {
 type SyllabusData = {
   id: string
   isCurved: boolean
+  isPointsBased: boolean
+  totalPoints: number | null
   curveDescription: string | null
   confirmedAt: string | null
   componentGroups: SyllabusComponentGroup[]
@@ -67,7 +69,6 @@ type SyllabusData = {
     assignmentId: string
     mean: number
     stdDev: number
-    source: string
   }[]
 }
 

@@ -31,7 +31,6 @@ export async function DELETE(req: NextRequest) {
           image: user.image,
           currentSemester: user.currentSemester,
           onboardingDone: user.onboardingDone,
-          gradescopeConnected: user.gradescopeConnected,
           lastSyncAt: user.lastSyncAt,
           originalCreatedAt: user.createdAt,
           originalUpdatedAt: user.updatedAt,
@@ -39,9 +38,9 @@ export async function DELETE(req: NextRequest) {
         },
       });
 
-      // Delete manual exam stats entered by this user (shared Assignment table,
-      // no cascade from User — must be cleaned up explicitly)
-      await tx.examStat.deleteMany({ where: { userId, source: 'manual' } });
+      // ExamStat rows cascade automatically now that userId is required and
+      // the FK is ON DELETE CASCADE, but delete explicitly for clarity.
+      await tx.examStat.deleteMany({ where: { userId } });
 
       // Delete manual assignments created by this user. These live in the shared
       // Assignment table, but onDelete: SetNull only nulls createdByUserId; the

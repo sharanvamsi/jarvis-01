@@ -517,14 +517,6 @@ export async function runGradescopeSync(userId: string): Promise<void> {
       await new Promise((r) => setTimeout(r, 200));
     }
 
-    // Mark user as Gradescope connected
-    await db.user
-      .update({
-        where: { id: userId },
-        data: { gradescopeConnected: true },
-      })
-      .catch(() => {});
-
     // Update sync metadata
     await db.syncMetadata.upsert({
       where: { userId_source: { userId, source: 'gradescope' } },

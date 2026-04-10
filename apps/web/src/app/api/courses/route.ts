@@ -34,8 +34,8 @@ export async function GET() {
             syllabus: {
               select: {
                 id: true,
-                source: true,
                 confirmedAt: true,
+                document: { select: { source: true } },
               },
             },
           },
@@ -52,7 +52,7 @@ export async function GET() {
         courseName: c.courseName,
         websiteUrl: c.websiteUrl,
         hasSyllabus: !!c.syllabus,
-        syllabusSource: c.syllabus?.source ?? null,
+        syllabusSource: c.syllabus?.document?.source ?? null,
         syllabusConfirmed: !!c.syllabus?.confirmedAt,
       }));
 

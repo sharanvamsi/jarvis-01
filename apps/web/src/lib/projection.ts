@@ -67,6 +67,8 @@ export interface GradeScaleEntry {
 
 export interface ProjectionInput {
   isCurved: boolean
+  isPointsBased: boolean
+  totalPoints: number | null
   groups: ProjectionGroup[]
   clobberPolicies: ClobberPolicy[]
   gradeScale: GradeScaleEntry[] | null
@@ -317,7 +319,14 @@ function computeWeightedProjection(
   for (const group of groups) {
     const score = groupScores.get(group.id)
     if (score === null || score === undefined) continue
-    weightedSum += score * group.weight
+    if (input.isPointsBased) {
+      // Points-based: group.weight = max points for this group
+      // score = percentage within the group (0-100)
+      // Earned points = (score / 100) * group.weight
+      weightedSum += (score / 100) * group.weight
+    } else {
+      weightedSum += score * group.weight
+    }
     totalWeightUsed += group.weight
   }
 
@@ -335,7 +344,29 @@ function computeWeightedProjection(
     }
   }
 
-  // Normalize to get overall percentage
+  if (input.isPointsBased && input.totalPoints) {
+    // Points-based: project total points earned, then map to letter
+    const projectedPoints = (weightedSum / totalWeightUsed) * input.totalPoints
+    const projectedPct = Math.round((projectedPoints / input.totalPoints) * 1000) / 10
+    const confidence: 'high' | 'medium' | 'low' =
+      totalWeightUsed / input.totalPoints >= 0.9 ? 'high'
+        : totalWeightUsed / input.totalPoints >= 0.5 ? 'medium'
+        : 'low'
+
+    return {
+      projectedLetter: letterFromPct(projectedPoints, gradeScale),
+      projectedPct,
+      projectedZScore: null,
+      projectedPercentile: null,
+      confidence,
+      pendingExams,
+      method: 'weighted',
+      disclaimer: null,
+      breakdown,
+    }
+  }
+
+  // Percentage-based: normalize to get overall percentage
   const normalizedPct = weightedSum / totalWeightUsed
   const confidence: 'high' | 'medium' | 'low' =
     totalWeightUsed >= 0.9 ? 'high' : totalWeightUsed >= 0.5 ? 'medium' : 'low'

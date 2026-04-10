@@ -14,17 +14,22 @@ import {
   type GroupDefinition,
 } from '../lib/assignment-matcher';
 
-export async function syncUser(userId: string): Promise<void> {
-  const t = Date.now();
+/**
+ * Phase 1: Canvas, Ed, Calendar — updates `lastSyncAt`, kicks revalidate.
+ * Returns false if the user does not exist (Phase 2 must not run).
+ */
+export async function runSyncPhase1(
+  userId: string,
+  syncStartedAtMs: number,
+): Promise<boolean> {
   console.log(`[syncUser] Starting sync for user ${userId}`);
 
   const user = await db.user.findUnique({ where: { id: userId } });
   if (!user) {
     console.error(`[syncUser] User ${userId} not found`);
-    return;
+    return false;
   }
 
-  // Run Canvas, Ed, Calendar in parallel
   const results = await Promise.allSettled([
     runCanvasSync(userId),
     runEdSync(userId),
@@ -40,9 +45,8 @@ export async function syncUser(userId: string): Promise<void> {
     }
   }
 
-  console.log(`[syncUser] Phase 1 complete in ${Date.now() - t}ms`);
+  console.log(`[syncUser] Phase 1 complete in ${Date.now() - syncStartedAtMs}ms`);
 
-  // Update last sync and revalidate immediately so dashboard shows data
   await db.user.update({
     where: { id: userId },
     data: { lastSyncAt: new Date() },
@@ -61,16 +65,18 @@ export async function syncUser(userId: string): Promise<void> {
     }).catch(() => {});
   }
 
-  // ── Phase 2: Slow enrichment (background, non-blocking) ───
-  runPhase2(userId, t, webUrl).catch(err =>
-    console.error('[syncUser] Phase 2 error:', err)
-  );
-
-  console.log(`[syncUser] Returning after Phase 1 for user ${userId}`);
+  return true;
 }
 
-async function runPhase2(userId: string, startTime: number, webUrl: string | undefined): Promise<void> {
-  // ── Phase 2a: independent fetchers ─────────────────────────────
+/**
+ * Phase 2: Gradescope, course website, enrichment, Berkeley Time, syllabus, assignment matching.
+ * Same implementation the worker fires as a background task after Phase 1.
+ */
+export async function runSyncPhase2(
+  userId: string,
+  syncStartedAtMs: number,
+  webUrl: string | undefined,
+): Promise<void> {
   console.log('[syncUser] Phase 2a starting (parallel: Gradescope + Website)');
   const [gradescopeResult, websiteResult] = await Promise.allSettled([
     runGradescopeSync(userId),
@@ -80,23 +86,21 @@ async function runPhase2(userId: string, startTime: number, webUrl: string | und
   if (gradescopeResult.status === 'rejected') {
     console.error('[Phase 2a] Gradescope failed:', gradescopeResult.reason);
   } else {
-    console.log(`[syncUser] Gradescope sync completed (${Date.now() - startTime}ms)`);
+    console.log(`[syncUser] Gradescope sync completed (${Date.now() - syncStartedAtMs}ms)`);
   }
   if (websiteResult.status === 'rejected') {
     console.error('[Phase 2a] Website failed:', websiteResult.reason);
   } else {
-    console.log(`[syncUser] Course website sync completed (${Date.now() - startTime}ms)`);
+    console.log(`[syncUser] Course website sync completed (${Date.now() - syncStartedAtMs}ms)`);
   }
 
-  // Enrichment depends on website data being present
   try {
     await enrichAssignmentsWithWebsiteData(userId);
-    console.log(`[syncUser] Assignment enrichment completed (${Date.now() - startTime}ms)`);
+    console.log(`[syncUser] Assignment enrichment completed (${Date.now() - syncStartedAtMs}ms)`);
   } catch (err) {
     console.error('[syncUser] Assignment enrichment failed:', err);
   }
 
-  // ── Phase 2b: independent enrichers ────────────────────────────
   console.log('[syncUser] Phase 2b starting (parallel: BerkeleyTime + Syllabus)');
   const [btResult, syllabusResult] = await Promise.allSettled([
     syncBerkeleytime(userId),
@@ -110,15 +114,13 @@ async function runPhase2(userId: string, startTime: number, webUrl: string | und
     console.error('[Phase 2b] Syllabus failed:', syllabusResult.reason);
   }
 
-  // ── Deduplication + matching: needs ALL above settled ──────────
   try {
     await runAssignmentMatchingWithGate(userId);
-    console.log(`[syncUser] Assignment matching completed (${Date.now() - startTime}ms)`);
+    console.log(`[syncUser] Assignment matching completed (${Date.now() - syncStartedAtMs}ms)`);
   } catch (err) {
     console.error('[syncUser] Assignment matching failed:', err);
   }
 
-  // Update sync timestamp again and revalidate after phase 2
   await db.user.update({
     where: { id: userId },
     data: { lastSyncAt: new Date() },
@@ -136,7 +138,28 @@ async function runPhase2(userId: string, startTime: number, webUrl: string | und
     }).catch(() => {});
   }
 
-  console.log(`[syncUser] Phase 2 complete in ${Date.now() - startTime}ms`);
+  console.log(`[syncUser] Phase 2 complete in ${Date.now() - syncStartedAtMs}ms`);
+}
+
+/** Phase 1 + Phase 2 with Phase 2 awaited (same semantics as the worker + completed background work). */
+export async function runSyncThroughPhase2(userId: string): Promise<void> {
+  const t = Date.now();
+  const ok = await runSyncPhase1(userId, t);
+  if (!ok) return;
+  await runSyncPhase2(userId, t, process.env.WEB_ORIGIN);
+}
+
+export async function syncUser(userId: string): Promise<void> {
+  const t = Date.now();
+  const ok = await runSyncPhase1(userId, t);
+  if (!ok) return;
+
+  const webUrl = process.env.WEB_ORIGIN;
+  runSyncPhase2(userId, t, webUrl).catch(err =>
+    console.error('[syncUser] Phase 2 error:', err),
+  );
+
+  console.log(`[syncUser] Returning after Phase 1 for user ${userId}`);
 }
 
 async function runAssignmentMatching(userId: string): Promise<void> {
@@ -282,8 +305,17 @@ async function runAssignmentMatchingWithGate(userId: string): Promise<void> {
 }
 
 async function enrichAssignmentsWithWebsiteData(userId: string): Promise<void> {
-  const rawWebsiteAssignments = await db.rawCourseWebsiteAssignment.findMany({
+  // Raw course website assignments are course-scoped (universal), so filter
+  // via the user's current enrollments.
+  const enrollments = await db.enrollment.findMany({
     where: { userId },
+    select: { courseId: true },
+  });
+  const courseIds = enrollments.map(e => e.courseId);
+  if (courseIds.length === 0) return;
+
+  const rawWebsiteAssignments = await db.rawCourseWebsiteAssignment.findMany({
+    where: { courseId: { in: courseIds } },
   });
 
   if (rawWebsiteAssignments.length === 0) return;
