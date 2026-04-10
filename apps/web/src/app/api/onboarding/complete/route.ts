@@ -15,7 +15,18 @@ export async function POST() {
       data: { onboardingDone: true },
     })
 
-    await triggerPipelineSync(session.user.id)
+    // Only sync services the user actually connected during onboarding
+    const tokens = await db.syncToken.findMany({
+      where: { userId: session.user.id },
+      select: { service: true },
+    })
+    const connectedServices = tokens.map((t) => t.service)
+    // Canvas is always connected at this point; also include calendar
+    const services = ['canvas', 'calendar']
+    if (connectedServices.includes('gradescope')) services.push('gradescope')
+    if (connectedServices.includes('ed')) services.push('ed')
+
+    await triggerPipelineSync(session.user.id, services)
 
     return NextResponse.json({ success: true })
   } catch (error) {

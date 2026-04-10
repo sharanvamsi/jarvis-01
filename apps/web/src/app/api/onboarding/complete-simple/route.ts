@@ -15,9 +15,17 @@ export async function POST() {
       data: { onboardingDone: true },
     });
 
-    // Wait for the trigger request so the sync reliably starts before the
-    // route handler finishes.
-    await triggerPipelineSync(session.user.id);
+    // Only sync services the user actually connected during onboarding
+    const tokens = await db.syncToken.findMany({
+      where: { userId: session.user.id },
+      select: { service: true },
+    });
+    const connectedServices = tokens.map((t) => t.service);
+    const services = ['canvas', 'calendar'];
+    if (connectedServices.includes('gradescope')) services.push('gradescope');
+    if (connectedServices.includes('ed')) services.push('ed');
+
+    await triggerPipelineSync(session.user.id, services);
 
     return NextResponse.json({ success: true });
   } catch (error) {

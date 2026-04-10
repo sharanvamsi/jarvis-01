@@ -186,7 +186,7 @@ export default function GradescopeCard() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { fetch('/api/sync/trigger', { method: 'POST' }).catch(() => {}); startSyncPolling(); }}
+              onClick={() => { fetch('/api/sync/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ services: ['gradescope'] }) }).catch(() => {}); startSyncPolling(); }}
               disabled={syncState === 'syncing'}
               className="bg-[#1F1F1F] hover:bg-[#2a2a2a] text-[#A3A3A3] text-sm px-4 py-2 rounded transition-colors flex items-center gap-2"
             >

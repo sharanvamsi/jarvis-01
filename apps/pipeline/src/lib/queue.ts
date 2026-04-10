@@ -16,12 +16,17 @@ connection.on('connect', () => {
   console.log('[redis] Connected');
 });
 
-export const syncQueue = new Queue(QUEUE_NAME, { connection });
+export interface SyncJobData {
+  userId: string;
+  services?: string[];
+}
+
+export const syncQueue = new Queue<SyncJobData>(QUEUE_NAME, { connection });
 
 export function createSyncWorker(
-  processor: (job: Job) => Promise<void>
-): Worker {
-  return new Worker(QUEUE_NAME, processor, {
+  processor: (job: Job<SyncJobData>) => Promise<void>
+): Worker<SyncJobData> {
+  return new Worker<SyncJobData>(QUEUE_NAME, processor, {
     connection,
     concurrency: 3, // process 3 users simultaneously — safe for Neon connection pool
   });

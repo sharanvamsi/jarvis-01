@@ -15,117 +15,77 @@ import {
 } from '../lib/assignment-matcher';
 
 /**
- * Phase 1: Canvas, Ed, Calendar — updates `lastSyncAt`, kicks revalidate.
- * Returns false if the user does not exist (Phase 2 must not run).
+ * Run sync for a user. If `services` is provided, only those workers run.
+ * If omitted, all workers run (used by the cron job for full background sync).
  */
-export async function runSyncPhase1(
-  userId: string,
-  syncStartedAtMs: number,
-): Promise<boolean> {
-  console.log(`[syncUser] Starting sync for user ${userId}`);
+export async function syncUser(userId: string, services?: string[]): Promise<void> {
+  const t = Date.now();
+  const shouldRun = (svc: string) => !services || services.includes(svc);
+
+  console.log(`[syncUser] Starting sync for user ${userId}${services ? ` (${services.join(', ')})` : ' (full)'}`);
 
   const user = await db.user.findUnique({ where: { id: userId } });
   if (!user) {
     console.error(`[syncUser] User ${userId} not found`);
-    return false;
+    return;
   }
 
-  const results = await Promise.allSettled([
-    runCanvasSync(userId),
-    runEdSync(userId),
-    runCalendarSync(userId),
-  ]);
+  // Run requested workers in parallel
+  const workerEntries: { name: string; promise: Promise<void> }[] = [];
+  if (shouldRun('canvas'))         workerEntries.push({ name: 'Canvas', promise: runCanvasSync(userId) });
+  if (shouldRun('ed'))             workerEntries.push({ name: 'Ed', promise: runEdSync(userId) });
+  if (shouldRun('calendar'))       workerEntries.push({ name: 'Calendar', promise: runCalendarSync(userId) });
+  if (shouldRun('gradescope'))     workerEntries.push({ name: 'Gradescope', promise: runGradescopeSync(userId) });
+  if (shouldRun('course_website')) workerEntries.push({ name: 'CourseWebsite', promise: runCourseWebsiteSync(userId) });
+
+  const results = await Promise.allSettled(workerEntries.map((w) => w.promise));
 
   for (const [i, result] of results.entries()) {
-    const name = ['Canvas', 'Ed', 'Calendar'][i];
+    const name = workerEntries[i].name;
     if (result.status === 'rejected') {
       console.error(`[syncUser] ${name} sync failed:`, result.reason);
     } else {
-      console.log(`[syncUser] ${name} sync completed`);
+      console.log(`[syncUser] ${name} sync completed (${Date.now() - t}ms)`);
     }
   }
 
-  console.log(`[syncUser] Phase 1 complete in ${Date.now() - syncStartedAtMs}ms`);
-
-  await db.user.update({
-    where: { id: userId },
-    data: { lastSyncAt: new Date() },
-  });
-
-  const webUrl = process.env.WEB_ORIGIN;
-  if (webUrl) {
-    fetch(`${webUrl}/api/revalidate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
-      },
-      body: JSON.stringify({ userId }),
-      signal: AbortSignal.timeout(5000),
-    }).catch(() => {});
+  // Post-sync: enrichment (only if course_website ran)
+  if (shouldRun('course_website')) {
+    try {
+      await enrichAssignmentsWithWebsiteData(userId);
+      console.log(`[syncUser] Assignment enrichment completed (${Date.now() - t}ms)`);
+    } catch (err) {
+      console.error('[syncUser] Assignment enrichment failed:', err);
+    }
   }
 
-  return true;
-}
-
-/**
- * Phase 2: Gradescope, course website, enrichment, Berkeley Time, syllabus, assignment matching.
- * Same implementation the worker fires as a background task after Phase 1.
- */
-export async function runSyncPhase2(
-  userId: string,
-  syncStartedAtMs: number,
-  webUrl: string | undefined,
-): Promise<void> {
-  console.log('[syncUser] Phase 2a starting (parallel: Gradescope + Website)');
-  const [gradescopeResult, websiteResult] = await Promise.allSettled([
-    runGradescopeSync(userId),
-    runCourseWebsiteSync(userId),
-  ]);
-
-  if (gradescopeResult.status === 'rejected') {
-    console.error('[Phase 2a] Gradescope failed:', gradescopeResult.reason);
-  } else {
-    console.log(`[syncUser] Gradescope sync completed (${Date.now() - syncStartedAtMs}ms)`);
-  }
-  if (websiteResult.status === 'rejected') {
-    console.error('[Phase 2a] Website failed:', websiteResult.reason);
-  } else {
-    console.log(`[syncUser] Course website sync completed (${Date.now() - syncStartedAtMs}ms)`);
+  // Post-sync: syllabus + BerkeleyTime (only on full sync or explicit request)
+  if (shouldRun('syllabus')) {
+    const postResults = await Promise.allSettled([
+      syncBerkeleytime(userId),
+      syncSyllabus(userId),
+    ]);
+    if (postResults[0].status === 'rejected') console.error('[syncUser] BerkeleyTime failed:', postResults[0].reason);
+    if (postResults[1].status === 'rejected') console.error('[syncUser] Syllabus failed:', postResults[1].reason);
   }
 
-  try {
-    await enrichAssignmentsWithWebsiteData(userId);
-    console.log(`[syncUser] Assignment enrichment completed (${Date.now() - syncStartedAtMs}ms)`);
-  } catch (err) {
-    console.error('[syncUser] Assignment enrichment failed:', err);
+  // Post-sync: assignment matching (if any assignment-related worker ran)
+  if (shouldRun('canvas') || shouldRun('gradescope') || shouldRun('course_website')) {
+    try {
+      await runAssignmentMatchingWithGate(userId);
+      console.log(`[syncUser] Assignment matching completed (${Date.now() - t}ms)`);
+    } catch (err) {
+      console.error('[syncUser] Assignment matching failed:', err);
+    }
   }
 
-  console.log('[syncUser] Phase 2b starting (parallel: BerkeleyTime + Syllabus)');
-  const [btResult, syllabusResult] = await Promise.allSettled([
-    syncBerkeleytime(userId),
-    syncSyllabus(userId),
-  ]);
-
-  if (btResult.status === 'rejected') {
-    console.error('[Phase 2b] BerkeleyTime failed:', btResult.reason);
-  }
-  if (syllabusResult.status === 'rejected') {
-    console.error('[Phase 2b] Syllabus failed:', syllabusResult.reason);
-  }
-
-  try {
-    await runAssignmentMatchingWithGate(userId);
-    console.log(`[syncUser] Assignment matching completed (${Date.now() - syncStartedAtMs}ms)`);
-  } catch (err) {
-    console.error('[syncUser] Assignment matching failed:', err);
-  }
-
+  // Update lastSyncAt + revalidate frontend
   await db.user.updateMany({
     where: { id: userId },
     data: { lastSyncAt: new Date() },
   });
 
+  const webUrl = process.env.WEB_ORIGIN;
   if (webUrl) {
     fetch(`${webUrl}/api/revalidate`, {
       method: 'POST',
@@ -138,28 +98,7 @@ export async function runSyncPhase2(
     }).catch(() => {});
   }
 
-  console.log(`[syncUser] Phase 2 complete in ${Date.now() - syncStartedAtMs}ms`);
-}
-
-/** Phase 1 + Phase 2 with Phase 2 awaited (same semantics as the worker + completed background work). */
-export async function runSyncThroughPhase2(userId: string): Promise<void> {
-  const t = Date.now();
-  const ok = await runSyncPhase1(userId, t);
-  if (!ok) return;
-  await runSyncPhase2(userId, t, process.env.WEB_ORIGIN);
-}
-
-export async function syncUser(userId: string): Promise<void> {
-  const t = Date.now();
-  const ok = await runSyncPhase1(userId, t);
-  if (!ok) return;
-
-  const webUrl = process.env.WEB_ORIGIN;
-  runSyncPhase2(userId, t, webUrl).catch(err =>
-    console.error('[syncUser] Phase 2 error:', err),
-  );
-
-  console.log(`[syncUser] Returning after Phase 1 for user ${userId}`);
+  console.log(`[syncUser] Complete in ${Date.now() - t}ms`);
 }
 
 async function runAssignmentMatching(userId: string): Promise<void> {

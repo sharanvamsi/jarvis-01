@@ -75,7 +75,11 @@ export default function CanvasCard() {
 
     if (!skipTrigger) {
       try {
-        const triggerRes = await fetch('/api/sync/trigger', { method: 'POST' });
+        const triggerRes = await fetch('/api/sync/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ services: ['canvas'] }),
+        });
         if (triggerRes.status === 429) {
           // A sync is already running
         }

@@ -750,8 +750,8 @@ function printReport(args: {
     console.log(`  ${args.jobWallMs}ms`);
   }
   if (args.awaitPhase2 && args.fullPipelineExtraMs != null) {
-    console.log(`\n── Additional wall awaiting Phase 2 ─────────────────────`);
-    console.log(`  ${args.fullPipelineExtraMs}ms (runSyncThroughPhase2 total minus Phase 1-style cut is not split here; see TIMINGS)`);
+    console.log(`\n── Full sync wall time ──────────────────────────────────`);
+    console.log(`  ${args.fullPipelineExtraMs}ms (syncUser total; see TIMINGS)`);
   }
 
   if (errors.length) {
@@ -824,12 +824,10 @@ Default: run syncUser() (job-shaped) after preflight; Phase 2 is NOT awaited.
   const db = dbMod.db;
   const { decrypt } = cryptoMod;
 
-  let syncUser: ((uid: string) => Promise<void>) | undefined;
-  let runSyncThroughPhase2: ((uid: string) => Promise<void>) | undefined;
+  let syncUser: ((uid: string, services?: string[]) => Promise<void>) | undefined;
   if (runFullSync) {
     const syncJobs = await import('../jobs/syncUser');
     syncUser = syncJobs.syncUser;
-    runSyncThroughPhase2 = syncJobs.runSyncThroughPhase2;
   }
 
   const totalStart = Date.now();
@@ -859,17 +857,17 @@ Default: run syncUser() (job-shaped) after preflight; Phase 2 is NOT awaited.
       jobWallMs = null;
     } else if (flags.awaitPhase2) {
       fullStart = Date.now();
-      const { durationMs } = await time('sync.runSyncThroughPhase2', () =>
-        runSyncThroughPhase2!(userId),
+      const { durationMs } = await time('sync.syncUser_full', () =>
+        syncUser!(userId),
       );
       fullEnd = Date.now();
       jobWallMs = null;
-      logTs('INFO', 'runSyncThroughPhase2 finished', { ms: durationMs });
+      logTs('INFO', 'syncUser finished', { ms: durationMs });
     } else {
       const jStart = Date.now();
       await time('sync.syncUser_job_shaped', () => syncUser!(userId));
       jobWallMs = Date.now() - jStart;
-      logTs('INFO', 'syncUser returned (Phase 2 may still be running in this process)', {
+      logTs('INFO', 'syncUser completed', {
         jobWallMs,
       });
     }

@@ -1,9 +1,9 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { triggerPipelineSync } from '@/lib/sync'
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -11,11 +11,20 @@ export async function POST() {
 
   const userId = session.user.id
 
+  let services: string[] | undefined
+  try {
+    const body = await req.json()
+    if (Array.isArray(body.services)) services = body.services
+  } catch {
+    // no body — full sync
+  }
+
   // Rate limit: block if any sync started in the last 2 minutes (running or completed)
   const recentSync = await db.syncLog.findFirst({
     where: {
       userId,
       startedAt: { gte: new Date(Date.now() - 2 * 60 * 1000) },
+      ...(services?.length ? { service: { in: services } } : {}),
     },
     orderBy: { startedAt: 'desc' },
   })
@@ -33,7 +42,7 @@ export async function POST() {
     )
   }
 
-  await triggerPipelineSync(userId)
+  await triggerPipelineSync(userId, services)
 
   return NextResponse.json({ ok: true, message: 'Sync started' })
 }

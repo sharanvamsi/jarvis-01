@@ -10,9 +10,9 @@ import { db } from './lib/db';
 console.log('[worker] Starting Jarvis sync worker...');
 
 const worker = createSyncWorker(async (job) => {
-  const { userId } = job.data;
-  console.log(`[worker] Processing sync job for user ${userId}`);
-  await syncUser(userId);
+  const { userId, services } = job.data;
+  console.log(`[worker] Processing sync job for user ${userId}${services ? ` (services: ${services.join(', ')})` : ' (full sync)'}`);
+  await syncUser(userId, services);
 });
 
 worker.on('completed', (job) => {
@@ -54,14 +54,14 @@ app.post('/sync', async (req, res) => {
     return;
   }
 
-  const { userId } = req.body;
+  const { userId, services } = req.body;
   if (!userId || typeof userId !== 'string') {
     res.status(400).json({ error: 'userId required' });
     return;
   }
 
   // Route through queue for deduplication and concurrency control
-  await syncQueue.add('sync', { userId }, {
+  await syncQueue.add('sync', { userId, services }, {
     jobId: `sync-${userId}-${Date.now()}`,
     removeOnComplete: true,
     removeOnFail: false,

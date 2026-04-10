@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
         'Content-Type': 'application/json',
         'x-pipeline-secret': process.env.PIPELINE_SECRET ?? '',
       },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify({ userId, services: ['canvas', 'gradescope', 'course_website'] }),
       signal: AbortSignal.timeout(5000),
     }).catch(() => {})
   }
