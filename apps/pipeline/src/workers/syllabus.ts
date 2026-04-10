@@ -4,6 +4,7 @@ import type { Prisma } from '@jarvis/db';
 import { decrypt } from '../lib/crypto';
 import { fetchCanvasSyllabus } from '../lib/syllabus-fetcher';
 import { extractSyllabus } from '../lib/syllabus-extractor';
+import { filterByUserSelection } from '../lib/enrollment-filter';
 
 function hashText(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
@@ -12,7 +13,7 @@ function hashText(text: string): string {
 export async function syncSyllabus(userId: string): Promise<void> {
   console.log(`[syllabus] Starting sync for user ${userId}`);
 
-  const enrollments = await db.enrollment.findMany({
+  const allEnrollments = await db.enrollment.findMany({
     where: { userId },
     include: {
       course: {
@@ -24,6 +25,8 @@ export async function syncSyllabus(userId: string): Promise<void> {
       },
     },
   });
+
+  const enrollments = filterByUserSelection(allEnrollments);
 
   // Get Canvas token for this user
   const canvasSyncToken = await db.syncToken.findUnique({
@@ -55,6 +58,15 @@ export async function syncSyllabus(userId: string): Promise<void> {
       continue;
     }
 
+    // Skip if another user's sync already extracted this syllabus recently (< 24h)
+    if (course.syllabus?.extractedAt) {
+      const hoursSince = (Date.now() - course.syllabus.extractedAt.getTime()) / 3600000;
+      if (hoursSince < 24) {
+        console.log(`[syllabus] Skipping ${course.courseCode} (extracted ${hoursSince.toFixed(0)}h ago)`);
+        continue;
+      }
+    }
+
     console.log(`[syllabus] Fetching syllabus for ${course.courseCode}`);
 
     // Website grading is handled by the course website worker (multi-page crawl).
@@ -69,6 +81,9 @@ export async function syncSyllabus(userId: string): Promise<void> {
       console.log(`[syllabus] No syllabus found for ${course.courseCode}`);
       continue;
     }
+
+    // Strip null bytes — PDF extraction can produce \x00 which PostgreSQL rejects
+    rawText = rawText.replace(/\x00/g, '');
 
     const newHash = hashText(rawText);
 

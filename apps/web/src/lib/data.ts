@@ -91,7 +91,7 @@ export const getUserCourses = cache(async (userId: string) => {
 
 export const getCourseById = cache(async (courseId: string, userId: string) => {
   try {
-    return await db.course.findUnique({
+    const course = await db.course.findUnique({
       where: { id: courseId },
       include: {
         assignments: {
@@ -114,6 +114,9 @@ export const getCourseById = cache(async (courseId: string, userId: string) => {
         exams: { orderBy: { date: 'asc' } },
       },
     })
+    // Enforce: user must be enrolled to view course data
+    if (!course || course.enrollments.length === 0) return null
+    return course
   } catch (error) {
     console.error("[data] getCourseById:", error)
     return null

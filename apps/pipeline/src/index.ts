@@ -102,10 +102,12 @@ cron.schedule('*/30 * * * *', async () => {
 
     console.log(`[Cron] Enqueueing ${users.length} stale users`);
 
+    // Stagger jobs with random 0-60s jitter to prevent thundering herd
     await Promise.all(
       users.map(u =>
         syncQueue.add('sync', { userId: u.id }, {
           jobId: `cron-sync-${u.id}-${Date.now()}`,
+          delay: Math.floor(Math.random() * 60_000),
           removeOnComplete: true,
           removeOnFail: false,
         })

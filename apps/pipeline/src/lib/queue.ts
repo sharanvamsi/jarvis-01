@@ -28,6 +28,6 @@ export function createSyncWorker(
 ): Worker<SyncJobData> {
   return new Worker<SyncJobData>(QUEUE_NAME, processor, {
     connection,
-    concurrency: 3, // process 3 users simultaneously — safe for Neon connection pool
+    concurrency: 5, // process 5 users simultaneously — safe for Neon pooled endpoint (10-20 connections)
   });
 }

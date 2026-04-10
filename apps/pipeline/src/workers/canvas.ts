@@ -337,7 +337,10 @@ export async function runCanvasSync(userId: string): Promise<void> {
     }
 
     // Step 6: Fetch assignments only for selected/current courses
-    await Promise.allSettled(courseIdsToSync.map(async (courseId) => {
+    // Process courses sequentially to avoid Canvas API rate limits (429s)
+    // at scale. Inner fetches (assignments + submissions + announcements)
+    // run in parallel per course — 3 concurrent requests is fine.
+    for (const courseId of courseIdsToSync) {
       try {
         // Fetch assignments, submissions, announcements in parallel
         const [assignmentsData, submissionsData, announcementsData] = await Promise.all([
@@ -456,7 +459,7 @@ export async function runCanvasSync(userId: string): Promise<void> {
       } catch (err) {
         console.error(`[canvas] Failed to sync course ${courseId}:`, err);
       }
-    }));
+    }
 
     console.log(`[canvas] Fetched + wrote assignments in ${Date.now() - syncStart}ms`);
 
