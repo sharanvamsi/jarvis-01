@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "cd ../.. && npm run db:generate && cd apps/web && npm run build",
+  "buildCommand": "cd ../.. && npm run db:generate && mkdir -p apps/web/generated/prisma && cp packages/db/generated/prisma/libquery_engine* apps/web/generated/prisma/ && cd apps/web && npm run build",
   "installCommand": "cd ../.. && npm install",
   "framework": "nextjs",
   "regions": ["sfo1"],
