@@ -7,8 +7,9 @@ export function middleware(request: NextRequest) {
     request.cookies.get("__Secure-authjs.session-token")
 
   const isOnboarding = request.nextUrl.pathname.startsWith("/onboarding")
+  const isWelcome = request.nextUrl.pathname.startsWith("/welcome")
 
-  if (isOnboarding) return NextResponse.next()
+  if (isOnboarding || isWelcome) return NextResponse.next()
   if (sessionCookie) return NextResponse.next()
 
   return NextResponse.redirect(new URL("/onboarding", request.url))

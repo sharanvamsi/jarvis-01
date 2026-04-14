@@ -1,4 +1,4 @@
-export const revalidate = 60;
+export const revalidate = 300;
 
 import { requireAuth, getGradesPageData } from '@/lib/data'
 import { GradesClient } from '@/components/grades/GradesClient'

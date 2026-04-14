@@ -1,4 +1,4 @@
-export const revalidate = 60;
+export const revalidate = 300;
 
 import { requireAuth, getUpcomingAssignments, getWeekCalendarEvents, hasCalendarEvents } from '@/lib/data'
 import { CalendarClient } from '@/components/calendar/CalendarClient'

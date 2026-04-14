@@ -6,7 +6,7 @@ import { filterByUserSelection } from '../lib/enrollment-filter';
 
 const GRADESCOPE_SERVICE_URL =
   process.env.GRADESCOPE_SERVICE_URL ?? 'http://localhost:8001';
-const THRESHOLD_HOURS = 6;
+const THRESHOLD_HOURS = 12;
 
 interface GradescopeCourse {
   gradescope_id: string;

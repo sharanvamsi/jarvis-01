@@ -3,7 +3,7 @@ import { decrypt } from '../lib/crypto';
 import { filterByUserSelection } from '../lib/enrollment-filter';
 
 const BASE_URL = 'https://us.edstem.org/api';
-const THRESHOLD_MINUTES = 15;
+const THRESHOLD_MINUTES = 60;
 const LINKED_ASSIGNMENT_REGEX =
   /(?:hw|homework|project|proj|lab)\s*[\w:-]+|midterm\s*\d*|final(?:\s+exam)?/gi;
 

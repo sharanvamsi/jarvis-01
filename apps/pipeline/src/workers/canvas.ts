@@ -8,6 +8,7 @@ import {
 } from '../lib/normalize';
 
 const BASE_URL = 'https://bcourses.berkeley.edu/api/v1';
+const THRESHOLD_MINUTES = 30;
 
 interface CanvasCourseData {
   id: number;
@@ -167,6 +168,22 @@ export async function runCanvasSync(userId: string): Promise<void> {
     return;
   }
   const now = new Date();
+
+  // Freshness check via SyncMetadata
+  const meta = await db.syncMetadata.findUnique({
+    where: { userId_source: { userId, source: 'canvas' } },
+  });
+
+  if (meta?.lastSynced) {
+    const minutesSince =
+      (Date.now() - meta.lastSynced.getTime()) / 60000;
+    if (minutesSince < THRESHOLD_MINUTES) {
+      console.log(
+        `[canvas] Skipping — synced ${minutesSince.toFixed(0)}min ago`
+      );
+      return;
+    }
+  }
 
   // Check if initial backfill needed
   const isFirstSync = !(await db.syncLog.findFirst({

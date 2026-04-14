@@ -7,8 +7,9 @@ import { MobileHeader } from "./MobileHeader";
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
+  const isWelcome = pathname === "/welcome";
 
-  if (isOnboarding) {
+  if (isOnboarding || isWelcome) {
     return <main>{children}</main>;
   }
 

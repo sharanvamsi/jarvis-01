@@ -9,7 +9,8 @@ export const authConfig: NextAuthConfig = {
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user
       const isOnboarding = nextUrl.pathname.startsWith("/onboarding")
-      if (isOnboarding) return true
+      const isWelcome = nextUrl.pathname.startsWith("/welcome")
+      if (isOnboarding || isWelcome) return true
       if (isLoggedIn) return true
       return false
     },

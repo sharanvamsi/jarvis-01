@@ -4,6 +4,7 @@ import { db } from '../lib/db';
 const CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
 const TOKEN_API = 'https://oauth2.googleapis.com/token';
 const REFRESH_BUFFER_SECONDS = 300;
+const THRESHOLD_MINUTES = 30;
 
 interface GoogleEvent {
   id: string;
@@ -175,6 +176,22 @@ export async function runCalendarSync(userId: string): Promise<void> {
     return;
   }
 
+  // Freshness check via SyncMetadata
+  const meta = await db.syncMetadata.findUnique({
+    where: { userId_source: { userId, source: 'calendar' } },
+  });
+
+  if (meta?.lastSynced) {
+    const minutesSince =
+      (Date.now() - meta.lastSynced.getTime()) / 60000;
+    if (minutesSince < THRESHOLD_MINUTES) {
+      console.log(
+        `[calendar] Skipping — synced ${minutesSince.toFixed(0)}min ago`
+      );
+      return;
+    }
+  }
+
   const syncLog = await db.syncLog.create({
     data: { userId, service: 'calendar', status: 'running' },
   });
@@ -244,6 +261,12 @@ export async function runCalendarSync(userId: string): Promise<void> {
       await db.$transaction(txOps);
     }
     console.log(`[calendar] Wrote ${txOps.length} ops in single transaction`);
+
+    await db.syncMetadata.upsert({
+      where: { userId_source: { userId, source: 'calendar' } },
+      update: { lastSynced: new Date() },
+      create: { userId, source: 'calendar', lastSynced: new Date() },
+    });
 
     await db.syncLog.update({
       where: { id: syncLog.id },
