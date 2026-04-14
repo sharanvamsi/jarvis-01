@@ -7,6 +7,7 @@ import { Trash2, Loader2 } from 'lucide-react';
 export default function DeleteAccountSection() {
   const [step, setStep] = useState<'idle' | 'confirm' | 'deleting'>('idle');
   const [reason, setReason] = useState('');
+  const [confirmText, setConfirmText] = useState('');
 
   async function handleDelete() {
     setStep('deleting');
@@ -71,9 +72,19 @@ export default function DeleteAccountSection() {
                 <li>Your account and login credentials</li>
               </ul>
             </div>
+            <div className="mb-4">
+              <input
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder='Type "DELETE" to confirm'
+                disabled={step === 'deleting'}
+                className="w-full bg-transparent border border-[#1F1F1F] rounded text-[#F5F5F5] text-sm font-mono px-3 py-2 placeholder-[#525252] outline-none focus:border-red-500/50 transition-colors disabled:opacity-50"
+              />
+            </div>
             <div className="flex items-center gap-3 justify-end">
               <button
-                onClick={() => { setStep('idle'); setReason(''); }}
+                onClick={() => { setStep('idle'); setReason(''); setConfirmText(''); }}
                 disabled={step === 'deleting'}
                 className="px-3 py-1.5 rounded text-sm text-[#A3A3A3] hover:text-[#F5F5F5] hover:bg-[#161616] transition-colors disabled:opacity-50"
               >
@@ -81,13 +92,13 @@ export default function DeleteAccountSection() {
               </button>
               <button
                 onClick={handleDelete}
-                disabled={step === 'deleting'}
-                className="flex items-center gap-2 px-3 py-1.5 rounded text-sm bg-red-600 hover:bg-red-500 text-white transition-colors disabled:opacity-50"
+                disabled={step === 'deleting' || confirmText !== 'DELETE'}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm bg-red-600 text-white transition-colors disabled:opacity-50 ${confirmText !== 'DELETE' ? 'cursor-not-allowed' : 'hover:bg-red-500'}`}
               >
                 {step === 'deleting' ? (
                   <><Loader2 className="w-4 h-4 animate-spin" />Deleting...</>
                 ) : (
-                  'Yes, delete everything'
+                  'Delete permanently'
                 )}
               </button>
             </div>

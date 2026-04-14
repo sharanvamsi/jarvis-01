@@ -8,8 +8,10 @@ export function middleware(request: NextRequest) {
 
   const isOnboarding = request.nextUrl.pathname.startsWith("/onboarding")
   const isWelcome = request.nextUrl.pathname.startsWith("/welcome")
+  const isPrivacy = request.nextUrl.pathname.startsWith("/privacy")
+  const isTerms = request.nextUrl.pathname.startsWith("/terms")
 
-  if (isOnboarding || isWelcome) return NextResponse.next()
+  if (isOnboarding || isWelcome || isPrivacy || isTerms) return NextResponse.next()
   if (sessionCookie) return NextResponse.next()
 
   return NextResponse.redirect(new URL("/onboarding", request.url))

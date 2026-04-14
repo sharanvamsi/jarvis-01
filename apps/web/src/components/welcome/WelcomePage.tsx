@@ -14,6 +14,7 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import GradeProjectionMockup from "./GradeProjectionMockup";
 
 const HeroCanvas = dynamic(() => import("./HeroCanvas"), { ssr: false });
 
@@ -161,11 +162,51 @@ export function WelcomePage() {
         </div>
       </section>
 
+      {/* Grade projection — star feature for finals season */}
+      <section className="py-20 px-6 border-t border-[#1F1F1F]">
+        <div className="max-w-5xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            <div>
+              <span className="text-[13px] text-amber-500 font-medium">
+                Finals season is here
+              </span>
+              <h2 className="text-3xl font-bold text-[#F5F5F5] mt-3 mb-6">
+                Know your grade before it&apos;s posted
+              </h2>
+              <ul className="space-y-4">
+                <li className="flex items-start gap-3">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#A3A3A3] mt-2 shrink-0" />
+                  <span className="text-[#A3A3A3] text-sm leading-relaxed">
+                    Edit any assignment score and see your projected letter
+                    grade update instantly
+                  </span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#A3A3A3] mt-2 shrink-0" />
+                  <span className="text-[#A3A3A3] text-sm leading-relaxed">
+                    Supports weighted grading, curved courses, and clobber
+                    policies
+                  </span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#A3A3A3] mt-2 shrink-0" />
+                  <span className="text-[#A3A3A3] text-sm leading-relaxed">
+                    Compare against past semesters with BerkeleyTime grade
+                    distributions
+                  </span>
+                </li>
+              </ul>
+            </div>
+            <GradeProjectionMockup />
+          </div>
+        </div>
+      </section>
+
       {/* How it works — concrete, not abstract */}
       <section id="how" className="py-20 px-6 border-t border-[#1F1F1F]">
         <div className="max-w-5xl mx-auto">
           <h2 className="text-sm font-medium text-[#525252] uppercase tracking-wider mb-10">
-            5 data sources. 1 dashboard. 3-minute setup.
+            Everything else Jarvis pulls in
           </h2>
 
           {/* Bento grid — asymmetric, not uniform */}

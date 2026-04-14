@@ -141,6 +141,43 @@ cron.schedule('*/15 * * * *', async () => {
   }
 });
 
+// ── Data retention: daily at 3 AM ───────────────────────────────
+cron.schedule('0 3 * * *', async () => {
+  console.log('[retention] Starting daily data retention...');
+  try {
+    const now = new Date();
+    const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const oneEightyDaysAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+
+    // 1. Prune SyncLog entries older than 90 days
+    const syncLogResult = await db.syncLog.deleteMany({
+      where: { startedAt: { lt: ninetyDaysAgo } },
+    });
+
+    // 2. Prune old RawGradescopeAssignment entries (>180 days)
+    const rawGsAssignResult = await db.rawGradescopeAssignment.deleteMany({
+      where: { syncedAt: { lt: oneEightyDaysAgo } },
+    });
+
+    // 3. Prune old non-current RawCanvasCourse entries (>180 days)
+    const rawCanvasResult = await db.rawCanvasCourse.deleteMany({
+      where: {
+        syncedAt: { lt: oneEightyDaysAgo },
+        isCurrent: false,
+      },
+    });
+
+    // 4. Prune old RawGradescopeCourse entries (>180 days)
+    const rawGsCourseResult = await db.rawGradescopeCourse.deleteMany({
+      where: { syncedAt: { lt: oneEightyDaysAgo } },
+    });
+
+    console.log(`[retention] Pruned: ${syncLogResult.count} sync logs, ${rawGsAssignResult.count} raw GS assignments, ${rawCanvasResult.count} raw Canvas courses, ${rawGsCourseResult.count} raw GS courses`);
+  } catch (err) {
+    console.error('[retention] Data retention failed:', err);
+  }
+});
+
 // ── Graceful Shutdown ────────────────────────────────────────
 async function shutdown() {
   console.log('[worker] Shutting down...');
