@@ -132,10 +132,10 @@ export default function Terms() {
             <p>
               If you have questions about these terms, contact us at{" "}
               <a
-                href="mailto:jarvis@berkeley.edu"
+                href="mailto:sharanvamsi@berkeley.edu"
                 className="text-blue-500 hover:text-blue-400 transition-colors"
               >
-                jarvis@berkeley.edu
+                sharanvamsi@berkeley.edu
               </a>
               .
             </p>

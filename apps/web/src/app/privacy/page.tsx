@@ -159,10 +159,10 @@ export default function Privacy() {
               If you have questions about this privacy policy or your data,
               contact us at{" "}
               <a
-                href="mailto:jarvis@berkeley.edu"
+                href="mailto:sharanvamsi@berkeley.edu"
                 className="text-blue-500 hover:text-blue-400 transition-colors"
               >
-                jarvis@berkeley.edu
+                sharanvamsi@berkeley.edu
               </a>
               .
             </p>
