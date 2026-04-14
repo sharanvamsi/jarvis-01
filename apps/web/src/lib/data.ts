@@ -53,6 +53,11 @@ export async function requireAuth() {
   return session.user as { id: string; name?: string | null; email?: string | null; image?: string | null }
 }
 
+export const getCurrentSemester = cache(async (userId: string) => {
+  const user = await db.user.findUnique({ where: { id: userId }, select: { currentSemester: true } })
+  return user?.currentSemester ?? 'SP26'
+})
+
 // ── COURSES ───────────────────────────────────────────────────
 export const getUserCourses = cache(async (userId: string) => {
   try {
@@ -172,6 +177,7 @@ export const getUpcomingAssignments = cache(async (userId: string, days = 14) =>
             ? "Gradescope"
             : "Website",
         htmlUrl: a.htmlUrl,
+        specUrl: a.specUrl,
       }
     })
   } catch (error) {
@@ -230,6 +236,7 @@ export const getMissingAssignments = cache(async (userId: string) => {
               ? "Gradescope"
               : "Website",
           htmlUrl: a.htmlUrl,
+          specUrl: a.specUrl,
         }
       })
   } catch (error) {

@@ -4,7 +4,6 @@ import { useState, useCallback } from 'react'
 import { getCourseColor } from '@/lib/courseColors'
 import GradeSandbox from '@/components/grades/GradeSandbox'
 import BTHistoricalSection from '@/components/grades/BTHistoricalSection'
-import AssignmentOverridePanel from '@/components/grades/AssignmentOverridePanel'
 
 type BTSnapshot = {
   id: string
@@ -89,7 +88,6 @@ export function GradesClient({ courses }: Props) {
   const [selectedCourse, setSelectedCourse] = useState(courses[0]?.id ?? '')
   const [projectedLetter, setProjectedLetter] = useState<string | null>(null)
   const [breakdownExpanded, setBreakdownExpanded] = useState(false)
-  const [showOverridePanel, setShowOverridePanel] = useState(false)
   const [selectedSnapshot, setSelectedSnapshot] = useState<BTSnapshot | null>(null)
   const handleSnapshotChange = useCallback((s: BTSnapshot | null) => setSelectedSnapshot(s), [])
 
@@ -125,7 +123,7 @@ export function GradesClient({ courses }: Props) {
               return (
                 <button
                   key={c.id}
-                  onClick={() => { setSelectedCourse(c.id); setProjectedLetter(null); setShowOverridePanel(false) }}
+                  onClick={() => { setSelectedCourse(c.id); setProjectedLetter(null) }}
                   className={`flex-shrink-0 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                     isActive
                       ? 'text-[#F5F5F5]'
@@ -154,15 +152,7 @@ export function GradesClient({ courses }: Props) {
 
             {/* Section B: Grade Sandbox */}
             <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-[#F5F5F5]">Grade Sandbox</h3>
-                <button
-                  onClick={() => setShowOverridePanel(true)}
-                  className="text-xs text-blue-400 hover:text-blue-300 border border-blue-500/30 rounded px-2.5 py-1 transition-colors"
-                >
-                  Manage assignments
-                </button>
-              </div>
+              <h3 className="text-sm font-medium text-[#F5F5F5] mb-3">Grade Sandbox</h3>
               <GradeSandbox
                 key={course.id}
                 assignments={course.assignments}
@@ -174,39 +164,13 @@ export function GradesClient({ courses }: Props) {
                 onProjectionChange={setProjectedLetter}
                 breakdownExpanded={breakdownExpanded}
                 onBreakdownToggle={() => setBreakdownExpanded(v => !v)}
-              />
-            </div>
-
-            {/* Override panel */}
-            {showOverridePanel && (
-              <AssignmentOverridePanel
-                courseCode={course.courseCode}
-                courseId={course.id}
-                assignments={course.assignments.map(a => ({
-                  id: a.id,
-                  name: a.name,
-                  assignmentType: a.assignmentType ?? 'unknown',
-                  pointsPossible: a.pointsPossible,
-                  dueDate: a.dueDate,
-                  groupName: a.groupName ?? null,
-                  override: a.override
-                    ? {
-                        excludeFromCalc: a.override.excludeFromCalc,
-                        overrideMaxScore: a.override.overrideMaxScore,
-                        overrideDueDate: a.override.overrideDueDate,
-                        overrideGroupId: a.override.overrideGroupId,
-                        overrideGroupName: null,
-                      }
-                    : null,
-                }))}
                 componentGroups={course.syllabus?.componentGroups.map(g => ({
                   id: g.id,
                   name: g.name,
                   weight: g.weight,
                 })) ?? []}
-                onClose={() => setShowOverridePanel(false)}
               />
-            )}
+            </div>
           </div>
         )}
       </div>

@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
       endTime: e.endTime.toISOString(),
       location: e.location,
       isAllDay: e.isAllDay,
+      htmlLink: e.htmlLink ?? null,
     }))
   )
 }

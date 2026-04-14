@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { ArrowLeft, ExternalLink, Mail, MessageSquare, Search, Users } from 'lucide-react'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { SourceBadge } from '@/components/ui/SourceBadge'
-import { stripHtml, relativeTime } from '@/lib/utils'
+import { stripHtml, relativeTime, getAssignmentUrl } from '@/lib/utils'
 
 type UserAssignment = {
   id: string
@@ -23,6 +23,7 @@ type Assignment = {
   dueDate: Date | null
   pointsPossible: number | null
   htmlUrl: string | null
+  specUrl: string | null
   canvasId: string | null
   gradescopeId: string | null
   userAssignments: UserAssignment[]
@@ -269,8 +270,9 @@ export function CourseDetailClient({ course, edConnected = false }: { course: Co
                   {assignments.slice(0, 5).map((assignment) => {
                     const ua = assignment.userAssignments?.[0]
                     const status = (ua?.status ?? 'ungraded') as 'graded' | 'submitted' | 'missing' | 'late' | 'ungraded'
+                    const url = getAssignmentUrl(assignment)
                     const card = (
-                      <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4${assignment.htmlUrl ? ' hover:bg-[#161616] transition-colors cursor-pointer' : ''}`}>
+                      <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4${url ? ' hover:bg-[#161616] transition-colors cursor-pointer' : ''}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
@@ -289,8 +291,8 @@ export function CourseDetailClient({ course, edConnected = false }: { course: Co
                         </div>
                       </div>
                     )
-                    return assignment.htmlUrl ? (
-                      <a key={assignment.id} href={assignment.htmlUrl} target="_blank" rel="noopener noreferrer" className="block">
+                    return url ? (
+                      <a key={assignment.id} href={url} target="_blank" rel="noopener noreferrer" className="block">
                         {card}
                       </a>
                     ) : (
@@ -370,8 +372,9 @@ export function CourseDetailClient({ course, edConnected = false }: { course: Co
               {filteredAssignments.map((assignment) => {
                 const ua = assignment.userAssignments?.[0]
                 const status = (ua?.status ?? 'ungraded') as 'graded' | 'submitted' | 'missing' | 'late' | 'ungraded'
+                const url = getAssignmentUrl(assignment)
                 const aCard = (
-                  <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4 hover:bg-[#161616] transition-colors${assignment.htmlUrl ? ' cursor-pointer' : ''}`}>
+                  <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4 hover:bg-[#161616] transition-colors${url ? ' cursor-pointer' : ''}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
@@ -398,8 +401,8 @@ export function CourseDetailClient({ course, edConnected = false }: { course: Co
                     </div>
                   </div>
                 )
-                return assignment.htmlUrl ? (
-                  <a key={assignment.id} href={assignment.htmlUrl} target="_blank" rel="noopener noreferrer" className="block">
+                return url ? (
+                  <a key={assignment.id} href={url} target="_blank" rel="noopener noreferrer" className="block">
                     {aCard}
                   </a>
                 ) : (

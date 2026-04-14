@@ -22,6 +22,7 @@ export default async function CalendarPage() {
         endTime: e.endTime.toISOString(),
         location: e.location,
         isAllDay: e.isAllDay,
+        htmlLink: e.htmlLink ?? null,
       }))}
     />
   )

@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Calendar, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { getCourseColor } from '@/lib/courseColors'
+import { getAssignmentUrl } from '@/lib/utils'
 
 type Assignment = {
   id: string
@@ -18,6 +19,7 @@ type Assignment = {
   pointsPossible: number | null
   source: string
   htmlUrl: string | null
+  specUrl: string | null
 }
 
 type CalendarEvent = {
@@ -27,6 +29,7 @@ type CalendarEvent = {
   endTime: string
   location: string | null
   isAllDay: boolean
+  htmlLink: string | null
 }
 
 type CalendarClientProps = {
@@ -220,9 +223,8 @@ export function CalendarClient({ assignments, userId, calendarConnected, initial
                   {dayEvents.map((e) => {
                     const start = new Date(e.startTime)
                     const end = new Date(e.endTime)
-                    return (
+                    const eventCard = (
                       <div
-                        key={e.id}
                         className="bg-[#111111] border border-[#1F1F1F] rounded p-2 hover:bg-[#161616] transition-colors"
                       >
                         <div className="flex items-center gap-1.5 mb-0.5">
@@ -237,13 +239,20 @@ export function CalendarClient({ assignments, userId, calendarConnected, initial
                         )}
                       </div>
                     )
+                    return e.htmlLink ? (
+                      <a key={e.id} href={e.htmlLink} target="_blank" rel="noopener noreferrer" className="block">
+                        {eventCard}
+                      </a>
+                    ) : (
+                      <div key={e.id}>{eventCard}</div>
+                    )
                   })}
                   {/* Assignments */}
                   {dayAssignments.map((a) => {
                     const color = getCourseColor(a.courseCode)
-                    return (
+                    const url = getAssignmentUrl(a)
+                    const assignmentCard = (
                       <div
-                        key={a.id}
                         className="bg-[#111111] border border-[#1F1F1F] rounded p-2 hover:bg-[#161616] transition-colors"
                       >
                         <span
@@ -264,6 +273,13 @@ export function CalendarClient({ assignments, userId, calendarConnected, initial
                           </div>
                         )}
                       </div>
+                    )
+                    return url ? (
+                      <a key={a.id} href={url} target="_blank" rel="noopener noreferrer" className="block">
+                        {assignmentCard}
+                      </a>
+                    ) : (
+                      <div key={a.id}>{assignmentCard}</div>
                     )
                   })}
                 </div>
@@ -297,9 +313,8 @@ export function CalendarClient({ assignments, userId, calendarConnected, initial
                     {dayEvents.map((e) => {
                       const start = new Date(e.startTime)
                       const end = new Date(e.endTime)
-                      return (
+                      const mobileEventCard = (
                         <div
-                          key={e.id}
                           className="bg-[#111111] border border-[#1F1F1F] rounded p-3 hover:bg-[#161616] transition-colors"
                         >
                           <div className="flex items-center gap-2 mb-1">
@@ -314,12 +329,19 @@ export function CalendarClient({ assignments, userId, calendarConnected, initial
                           )}
                         </div>
                       )
+                      return e.htmlLink ? (
+                        <a key={e.id} href={e.htmlLink} target="_blank" rel="noopener noreferrer" className="block">
+                          {mobileEventCard}
+                        </a>
+                      ) : (
+                        <div key={e.id}>{mobileEventCard}</div>
+                      )
                     })}
                     {dayAssignments.map((a) => {
                       const color = getCourseColor(a.courseCode)
-                      return (
+                      const url = getAssignmentUrl(a)
+                      const mobileAssignmentCard = (
                         <div
-                          key={a.id}
                           className="bg-[#111111] border border-[#1F1F1F] rounded p-3 hover:bg-[#161616] transition-colors"
                         >
                           <div className="flex items-center gap-2 mb-1">
@@ -342,6 +364,13 @@ export function CalendarClient({ assignments, userId, calendarConnected, initial
                             {a.name}
                           </div>
                         </div>
+                      )
+                      return url ? (
+                        <a key={a.id} href={url} target="_blank" rel="noopener noreferrer" className="block">
+                          {mobileAssignmentCard}
+                        </a>
+                      ) : (
+                        <div key={a.id}>{mobileAssignmentCard}</div>
                       )
                     })}
                   </div>

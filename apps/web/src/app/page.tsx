@@ -3,13 +3,12 @@ export const revalidate = 120;
 import { ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { StatCard } from '@/components/dashboard/StatCard';
-import { UnifiedAnnouncementCard } from '@/components/dashboard/UnifiedAnnouncementCard';
-import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
-import { DashboardQuestions } from '@/components/dashboard/DashboardQuestions';
+import { MissingSection } from '@/components/dashboard/MissingSection';
+import { DashboardUpdates } from '@/components/dashboard/DashboardUpdates';
 import { OfficeHoursCard } from '@/components/dashboard/OfficeHoursCard';
 import { ExamCard } from '@/components/dashboard/ExamCard';
 import { getCourseColor } from '@/lib/courseColors';
-import { daysUntil, daysOverdue, stripHtml } from '@/lib/utils';
+import { daysUntil, stripHtml, getAssignmentUrl } from '@/lib/utils';
 import {
   requireAuth,
   getUpcomingAssignments,
@@ -25,6 +24,7 @@ import {
   hasEdToken,
   hasGradescopeToken,
   getGradescopeSyncError,
+  getCurrentSemester,
 } from '@/lib/data';
 
 export default async function Dashboard() {
@@ -107,8 +107,19 @@ export default async function Dashboard() {
     .sort((a, b) => b.postedAt.getTime() - a.postedAt.getTime())
     .slice(0, 15);
 
-  // Pass questions to client component for sorting (default: recent)
-  const sortedQuestions = edQuestions.slice(0, 20);
+  // Flatten questions for DashboardUpdates client component
+  const sortedQuestions = edQuestions.slice(0, 20).map((q) => ({
+    id: q.id,
+    title: q.title,
+    contentPreview: q.contentPreview,
+    threadType: q.threadType,
+    postedAt: q.postedAt,
+    url: q.url,
+    voteCount: q.voteCount,
+    answerCount: q.answerCount,
+    isAnswered: q.isAnswered,
+    courseCode: q.course?.courseCode ?? '',
+  }));
 
   const upcomingNotSubmitted = upcoming.filter((a) => !a.submitted);
 
@@ -202,9 +213,10 @@ export default async function Dashboard() {
                 <div className="space-y-3">
                   {upcomingNotSubmitted.slice(0, 5).map((a) => {
                     const courseColor = getCourseColor(a.courseCode);
+                    const url = getAssignmentUrl(a);
                     const cardContent = (
                       <div
-                        className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4 hover:bg-[#161616] transition-colors${a.htmlUrl ? ' cursor-pointer' : ''}`}
+                        className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4 hover:bg-[#161616] transition-colors${url ? ' cursor-pointer' : ''}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
@@ -231,8 +243,8 @@ export default async function Dashboard() {
                         </div>
                       </div>
                     );
-                    return a.htmlUrl ? (
-                      <a key={a.id} href={a.htmlUrl} target="_blank" rel="noopener noreferrer" className="block">
+                    return url ? (
+                      <a key={a.id} href={url} target="_blank" rel="noopener noreferrer" className="block">
                         {cardContent}
                       </a>
                     ) : (
@@ -247,82 +259,11 @@ export default async function Dashboard() {
               </div>
             )}
 
+            {/* UPDATES (Announcements + Questions tabbed) */}
+            <DashboardUpdates announcements={courseUpdates.slice(0, 8)} questions={sortedQuestions} />
+
             {/* MISSING ASSIGNMENTS */}
-            {missing.length > 0 && (
-              <CollapsibleSection
-                title="Missing"
-                count={missing.length}
-                defaultOpen={missing.length <= 3}
-                headerClassName="text-amber-500"
-              >
-                {missing.map((a) => {
-                  const courseColor = getCourseColor(a.courseCode);
-                  const cardContent = (
-                    <div
-                      className={`bg-[#111111] border border-[#1F1F1F] border-l-2 border-l-red-500 rounded-md p-4 hover:bg-[#161616] transition-colors${a.htmlUrl ? ' cursor-pointer' : ''}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span
-                              className="px-2 py-0.5 rounded text-xs font-medium"
-                              style={{ backgroundColor: `${courseColor}20`, color: courseColor }}
-                            >
-                              {a.courseCode}
-                            </span>
-                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-500/10 text-red-400">
-                              missing
-                            </span>
-                          </div>
-                          <div className="text-[#F5F5F5] text-sm font-medium">{a.name}</div>
-                        </div>
-                        <div className="text-right flex-shrink-0">
-                          {a.dueDate && (
-                            <div className="text-red-400 text-xs">{daysOverdue(a.dueDate)}</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                  return a.htmlUrl ? (
-                    <a key={a.id} href={a.htmlUrl} target="_blank" rel="noopener noreferrer" className="block">
-                      {cardContent}
-                    </a>
-                  ) : (
-                    <div key={a.id}>{cardContent}</div>
-                  );
-                })}
-              </CollapsibleSection>
-            )}
-
-            {/* COURSE UPDATES (Canvas + Ed announcements merged) */}
-            {courseUpdates.length > 0 ? (
-              <div className="mb-8">
-                <h2 className="text-[#F5F5F5] text-lg font-medium mb-4">Course Updates</h2>
-                <div className="space-y-3">
-                  {courseUpdates.slice(0, 8).map((u) => (
-                    <UnifiedAnnouncementCard
-                      key={`${u.source}-${u.id}`}
-                      title={u.title}
-                      body={u.body ?? null}
-                      postedAt={u.postedAt}
-                      source={u.source}
-                      courseCode={u.courseCode}
-                      url={u.url ?? null}
-                    />
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="mb-8 bg-[#111111] border border-[#1F1F1F] rounded-md p-8 text-center">
-                <div className="text-[#525252] text-sm">No announcements yet</div>
-              </div>
-            )}
-
-            {/* STUDENT QUESTIONS */}
-            {sortedQuestions.length > 0 && (
-              <DashboardQuestions questions={sortedQuestions} />
-            )}
+            <MissingSection missing={missing} semesterKey={await getCurrentSemester(user.id)} />
           </div>
 
           {/* RIGHT COLUMN */}
@@ -331,25 +272,34 @@ export default async function Dashboard() {
               <h2 className="text-[#F5F5F5] text-lg font-medium mb-4">Today&apos;s Events</h2>
               {todaysEvents.length > 0 ? (
                 <div className="space-y-3">
-                  {todaysEvents.map((c) => (
-                    <div key={c.id} className="bg-[#111111] border border-[#1F1F1F] rounded-md p-4">
-                      <div className="text-[#F5F5F5] text-sm font-medium">{c.title}</div>
-                      <div className="text-[#A3A3A3] text-xs mt-1">
-                        {new Date(c.startTime).toLocaleTimeString([], {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                          timeZone: 'America/Los_Angeles',
-                        })}{' '}
-                        &mdash;{' '}
-                        {new Date(c.endTime).toLocaleTimeString([], {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                          timeZone: 'America/Los_Angeles',
-                        })}
+                  {todaysEvents.map((c) => {
+                    const eventCard = (
+                      <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4${c.htmlLink ? ' hover:bg-[#161616] transition-colors' : ''}`}>
+                        <div className="text-[#F5F5F5] text-sm font-medium">{c.title}</div>
+                        <div className="text-[#A3A3A3] text-xs mt-1">
+                          {new Date(c.startTime).toLocaleTimeString([], {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            timeZone: 'America/Los_Angeles',
+                          })}{' '}
+                          &mdash;{' '}
+                          {new Date(c.endTime).toLocaleTimeString([], {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            timeZone: 'America/Los_Angeles',
+                          })}
+                        </div>
+                        {c.location && <div className="text-[#525252] text-xs mt-0.5">{c.location}</div>}
                       </div>
-                      {c.location && <div className="text-[#525252] text-xs mt-0.5">{c.location}</div>}
-                    </div>
-                  ))}
+                    );
+                    return c.htmlLink ? (
+                      <a key={c.id} href={c.htmlLink} target="_blank" rel="noopener noreferrer" className="block">
+                        {eventCard}
+                      </a>
+                    ) : (
+                      <div key={c.id}>{eventCard}</div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="bg-[#111111] border border-[#1F1F1F] rounded-md p-4 text-center">

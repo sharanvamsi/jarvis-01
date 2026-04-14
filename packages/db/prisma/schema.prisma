@@ -249,6 +249,7 @@ model CalendarEvent {
   startTime     DateTime  @map("start_time")
   endTime       DateTime  @map("end_time")
   location      String?
+  htmlLink      String?   @map("html_link")
   isAllDay      Boolean   @default(false) @map("is_all_day")
   isClassEvent  Boolean   @default(false) @map("is_class_event")
   courseCode    String?   @map("course_code")

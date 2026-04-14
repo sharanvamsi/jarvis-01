@@ -248,10 +248,12 @@ export async function runCalendarSync(userId: string): Promise<void> {
       const title = event.summary ?? 'Untitled';
       const location = event.location ?? null;
 
+      const htmlLink = event.htmlLink ?? null;
+
       txOps.push(db.calendarEvent.upsert({
         where: { userId_googleEventId: { userId, googleEventId: event.id } },
-        update: { title, startTime, endTime, location, isAllDay, isClassEvent: classEvent, courseCode: linkedCourseCode, berkeleyStart, berkeleyEnd },
-        create: { userId, googleEventId: event.id, title, startTime, endTime, location, isAllDay, isClassEvent: classEvent, courseCode: linkedCourseCode, berkeleyStart, berkeleyEnd },
+        update: { title, startTime, endTime, location, htmlLink, isAllDay, isClassEvent: classEvent, courseCode: linkedCourseCode, berkeleyStart, berkeleyEnd },
+        create: { userId, googleEventId: event.id, title, startTime, endTime, location, htmlLink, isAllDay, isClassEvent: classEvent, courseCode: linkedCourseCode, berkeleyStart, berkeleyEnd },
       }));
 
       recordsCreated++;

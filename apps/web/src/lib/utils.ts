@@ -51,6 +51,10 @@ export function stripHtml(html: string | null | undefined): string {
     .slice(0, 300)
 }
 
+export function getAssignmentUrl(a: { htmlUrl?: string | null; specUrl?: string | null }): string | null {
+  return a.htmlUrl || a.specUrl || null;
+}
+
 export function daysOverdue(date: Date | string): string {
   const now = new Date()
   const then = new Date(date)

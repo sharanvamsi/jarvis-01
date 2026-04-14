@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, Eye, EyeOff, Plus } from 'lucide-react'
 import SyllabusConfirmation from '@/components/grades/SyllabusConfirmation'
 import SyllabusManualEntry from '@/components/grades/SyllabusManualEntry'
 import GradeBreakdown from '@/components/grades/GradeBreakdown'
@@ -93,6 +93,7 @@ interface Props {
   onProjectionChange?: (letter: string | null) => void
   breakdownExpanded: boolean
   onBreakdownToggle: () => void
+  componentGroups?: Array<{id: string; name: string; weight: number}>
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -148,6 +149,7 @@ export default function GradeSandbox({
   onProjectionChange,
   breakdownExpanded,
   onBreakdownToggle,
+  componentGroups,
 }: Props) {
   const router = useRouter()
 
@@ -181,6 +183,188 @@ export default function GradeSandbox({
   const handleReset = useCallback(() => {
     setEditedScores(getInitialScores())
   }, [assignments])
+
+  // ── Edit mode state ────────────────────────────────────────
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [overrideEdits, setOverrideEdits] = useState<Record<string, {
+    excludeFromCalc: boolean;
+    overrideMaxScore: string;
+    overrideDueDate: string;
+    overrideGroupId: string;
+  }>>({})
+  const [savingOverride, setSavingOverride] = useState<string | null>(null)
+  const [overrideError, setOverrideError] = useState<string | null>(null)
+
+  // New assignment form state
+  const [newAssignment, setNewAssignment] = useState({
+    name: '',
+    pointsPossible: '',
+    score: '',
+    dueDate: '',
+    groupId: '',
+  })
+  const [addSaving, setAddSaving] = useState(false)
+
+  // Initialize override edits when entering edit mode
+  useEffect(() => {
+    if (isEditMode) {
+      const initial: Record<string, {
+        excludeFromCalc: boolean;
+        overrideMaxScore: string;
+        overrideDueDate: string;
+        overrideGroupId: string;
+      }> = {}
+      for (const a of assignments) {
+        initial[a.id] = {
+          excludeFromCalc: a.override?.excludeFromCalc ?? false,
+          overrideMaxScore: a.override?.overrideMaxScore?.toString() ?? '',
+          overrideDueDate: a.override?.overrideDueDate?.slice(0, 10) ?? '',
+          overrideGroupId: a.override?.overrideGroupId ?? '',
+        }
+      }
+      setOverrideEdits(initial)
+    }
+  }, [isEditMode, assignments])
+
+  function getDefaultEdit(a: GradeAssignment) {
+    return {
+      excludeFromCalc: a.override?.excludeFromCalc ?? false,
+      overrideMaxScore: a.override?.overrideMaxScore?.toString() ?? '',
+      overrideDueDate: a.override?.overrideDueDate?.slice(0, 10) ?? '',
+      overrideGroupId: a.override?.overrideGroupId ?? '',
+    }
+  }
+
+  function deriveAssignmentType(groupId: string): string {
+    if (!groupId || !componentGroups) return 'other'
+    const group = componentGroups.find(g => g.id === groupId)
+    if (!group) return 'other'
+    const name = group.name.toLowerCase()
+    if (name.includes('exam') || name.includes('midterm') || name.includes('final')) return 'exam'
+    if (name.includes('lab')) return 'lab'
+    if (name.includes('project')) return 'project'
+    return 'homework'
+  }
+
+  async function saveOverride(assignmentId: string, editData?: typeof overrideEdits[string]) {
+    setSavingOverride(assignmentId)
+    setOverrideError(null)
+    const edit = editData ?? overrideEdits[assignmentId]
+    if (!edit) return
+    const isExcludeViaGroup = edit.overrideGroupId === '__exclude__'
+    try {
+      const res = await fetch('/api/assignments/override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assignmentId,
+          excludeFromCalc: isExcludeViaGroup ? true : edit.excludeFromCalc,
+          overrideMaxScore: edit.overrideMaxScore !== ''
+            ? parseFloat(edit.overrideMaxScore)
+            : null,
+          overrideDueDate: edit.overrideDueDate || null,
+          overrideGroupId: isExcludeViaGroup ? null : (edit.overrideGroupId || null),
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setOverrideError(err.error ?? 'Failed to save override')
+        return
+      }
+      if (isExcludeViaGroup) {
+        setOverrideEdits(prev => ({
+          ...prev,
+          [assignmentId]: {
+            ...prev[assignmentId],
+            excludeFromCalc: true,
+            overrideGroupId: '',
+          },
+        }))
+      }
+      router.refresh()
+    } catch {
+      setOverrideError('Network error -- could not save override')
+    } finally {
+      setSavingOverride(null)
+    }
+  }
+
+  async function resetOverride(assignmentId: string) {
+    setSavingOverride(assignmentId)
+    setOverrideError(null)
+    try {
+      const res = await fetch('/api/assignments/override', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignmentId }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setOverrideError(err.error ?? 'Failed to reset override')
+        return
+      }
+      setOverrideEdits(prev => ({
+        ...prev,
+        [assignmentId]: {
+          excludeFromCalc: false,
+          overrideMaxScore: '',
+          overrideDueDate: '',
+          overrideGroupId: '',
+        },
+      }))
+      router.refresh()
+    } catch {
+      setOverrideError('Network error -- could not reset override')
+    } finally {
+      setSavingOverride(null)
+    }
+  }
+
+  function toggleExclude(assignmentId: string) {
+    const current = overrideEdits[assignmentId]
+    const a = assignments.find(x => x.id === assignmentId)
+    if (!a) return
+    const edit = current ?? getDefaultEdit(a)
+    const newEdit = { ...edit, excludeFromCalc: !edit.excludeFromCalc }
+    setOverrideEdits(prev => ({ ...prev, [assignmentId]: newEdit }))
+    saveOverride(assignmentId, newEdit)
+  }
+
+  async function handleAddAssignment() {
+    if (!newAssignment.name.trim()) return
+    setAddSaving(true)
+    setOverrideError(null)
+    try {
+      const res = await fetch('/api/assignments/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courseId,
+          name: newAssignment.name.trim(),
+          pointsPossible: newAssignment.pointsPossible
+            ? parseFloat(newAssignment.pointsPossible)
+            : null,
+          score: newAssignment.score
+            ? parseFloat(newAssignment.score)
+            : null,
+          dueDate: newAssignment.dueDate || null,
+          groupId: newAssignment.groupId || null,
+          assignmentType: deriveAssignmentType(newAssignment.groupId),
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setOverrideError(err.error ?? 'Failed to add assignment')
+        return
+      }
+      setNewAssignment({ name: '', pointsPossible: '', score: '', dueDate: '', groupId: '' })
+      router.refresh()
+    } catch {
+      setOverrideError('Network error -- could not add assignment')
+    } finally {
+      setAddSaving(false)
+    }
+  }
 
   // Syllabus confirmation state
   const [showConfirmModal, setShowConfirmModal] = useState(
@@ -505,15 +689,35 @@ export default function GradeSandbox({
         />
       )}
 
-      {/* Reset button + table header */}
-      {hasEdits && (
-        <div className="flex justify-end mb-2">
+      {/* Toolbar: edit mode toggle + reset scores */}
+      <div className="flex justify-end gap-2 mb-2">
+        {hasEdits && (
           <button
             onClick={handleReset}
             className="flex items-center gap-1 text-xs text-[#525252] hover:text-[#A3A3A3] transition-colors"
           >
             <RotateCcw size={11} />
             Reset scores
+          </button>
+        )}
+        <button
+          onClick={() => setIsEditMode(!isEditMode)}
+          className={`text-xs px-3 py-1.5 rounded transition-colors ${
+            isEditMode
+              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+              : 'text-[#A3A3A3] hover:text-[#F5F5F5] border border-[#1F1F1F]'
+          }`}
+        >
+          {isEditMode ? 'Done editing' : 'Edit assignments'}
+        </button>
+      </div>
+
+      {/* Override error banner */}
+      {overrideError && (
+        <div className="mb-2 p-2 bg-red-500/10 border border-red-500/20 rounded flex items-center justify-between">
+          <span className="text-xs text-red-400">{overrideError}</span>
+          <button onClick={() => setOverrideError(null)} className="text-red-400 hover:text-red-300 ml-2 shrink-0 text-xs">
+            dismiss
           </button>
         </div>
       )}
@@ -556,7 +760,7 @@ export default function GradeSandbox({
                 </td>
               </tr>
             ) : (
-              assignments.filter(a => !a.override?.excludeFromCalc).map((a) => {
+              assignments.filter(a => isEditMode || !a.override?.excludeFromCalc).map((a) => {
                 const groupName = assignmentGroupMap[a.id]
                 const isExamRow =
                   syllabus?.isCurved &&
@@ -565,7 +769,9 @@ export default function GradeSandbox({
                     (g) => g.isExam && g.assignmentIds.includes(a.id)
                   )
                 const examStat = localExamStats[a.id] ?? null
-                const isExcluded = a.override?.excludeFromCalc === true
+                const isExcluded = isEditMode
+                  ? (overrideEdits[a.id]?.excludeFromCalc ?? a.override?.excludeFromCalc === true)
+                  : a.override?.excludeFromCalc === true
                 const effectiveMax = a.override?.overrideMaxScore ?? a.pointsPossible
                 const maxIsOverridden = a.override?.overrideMaxScore != null && a.override.overrideMaxScore !== a.pointsPossible
 
@@ -575,11 +781,24 @@ export default function GradeSandbox({
                     className={`border-b border-[#1F1F1F] last:border-0 ${isExcluded ? 'opacity-50' : ''}`}
                   >
                     <td className="p-3">
-                      <div className={`text-sm truncate max-w-[200px] sm:max-w-[300px] ${isExcluded ? 'text-[#525252] line-through' : 'text-[#F5F5F5]'}`}>
-                        {a.name}
-                      </div>
-                      <div className="text-[#525252] text-xs sm:hidden">
-                        {formatDate(a.dueDate)}
+                      <div className="flex items-center">
+                        {isEditMode && (
+                          <button
+                            onClick={() => toggleExclude(a.id)}
+                            className="mr-1.5 text-[#525252] hover:text-[#A3A3A3] shrink-0"
+                            title={isExcluded ? 'Include in calculation' : 'Exclude from calculation'}
+                          >
+                            {isExcluded ? <EyeOff size={14} className="text-amber-500" /> : <Eye size={14} />}
+                          </button>
+                        )}
+                        <div>
+                          <div className={`text-sm truncate max-w-[200px] sm:max-w-[300px] ${isExcluded ? 'text-[#525252] line-through' : 'text-[#F5F5F5]'}`}>
+                            {a.name}
+                          </div>
+                          <div className="text-[#525252] text-xs sm:hidden">
+                            {formatDate(a.dueDate)}
+                          </div>
+                        </div>
                       </div>
                       {/* Exam stat entry for curved courses */}
                       {isExamRow && !examStat && expandedStatEntry !== a.id && (
@@ -609,7 +828,24 @@ export default function GradeSandbox({
                     </td>
                     {syllabus && isConfirmed && (
                       <td className="p-3 hidden md:table-cell">
-                        {groupName ? (
+                        {isEditMode && componentGroups?.length ? (
+                          <select
+                            value={overrideEdits[a.id]?.overrideGroupId || ''}
+                            onChange={(e) => {
+                              const newEdits = { ...overrideEdits }
+                              newEdits[a.id] = { ...(newEdits[a.id] || getDefaultEdit(a)), overrideGroupId: e.target.value }
+                              setOverrideEdits(newEdits)
+                              saveOverride(a.id, newEdits[a.id])
+                            }}
+                            className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[11px] text-[#A3A3A3] px-1 py-0.5 w-full"
+                          >
+                            <option value="">{groupName ?? 'Current group'}</option>
+                            {componentGroups.map(g => (
+                              <option key={g.id} value={g.id}>{g.name} ({Math.round(g.weight * 100)}%)</option>
+                            ))}
+                            <option value="__exclude__">Exclude</option>
+                          </select>
+                        ) : groupName ? (
                           <span className="text-[11px] text-[#525252] bg-[#161616] border border-[#1F1F1F] rounded px-1.5 py-0.5">
                             {groupName}
                           </span>
@@ -619,7 +855,24 @@ export default function GradeSandbox({
                       </td>
                     )}
                     <td className="p-3 text-[#A3A3A3] text-sm hidden sm:table-cell">
-                      {formatDate(a.dueDate)}
+                      {isEditMode ? (
+                        <input
+                          type="date"
+                          value={overrideEdits[a.id]?.overrideDueDate || ''}
+                          onChange={(e) => {
+                            setOverrideEdits(prev => ({
+                              ...prev,
+                              [a.id]: { ...(prev[a.id] || getDefaultEdit(a)), overrideDueDate: e.target.value },
+                            }))
+                          }}
+                          onBlur={() => {
+                            if (overrideEdits[a.id]) saveOverride(a.id)
+                          }}
+                          className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[11px] text-[#A3A3A3] px-1 py-0.5"
+                        />
+                      ) : (
+                        formatDate(a.dueDate)
+                      )}
                     </td>
                     <td className="p-3 text-right">
                       {(() => {
@@ -658,7 +911,25 @@ export default function GradeSandbox({
                       })()}
                     </td>
                     <td className={`p-3 text-center text-sm ${maxIsOverridden ? 'text-amber-400' : 'text-[#A3A3A3]'}`}>
-                      {effectiveMax != null ? effectiveMax : '--'}
+                      {isEditMode ? (
+                        <input
+                          type="number"
+                          value={overrideEdits[a.id]?.overrideMaxScore || ''}
+                          onChange={(e) => {
+                            setOverrideEdits(prev => ({
+                              ...prev,
+                              [a.id]: { ...(prev[a.id] || getDefaultEdit(a)), overrideMaxScore: e.target.value },
+                            }))
+                          }}
+                          onBlur={() => {
+                            if (overrideEdits[a.id]) saveOverride(a.id)
+                          }}
+                          placeholder={String(a.pointsPossible ?? '')}
+                          className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[11px] text-center w-14 px-1 py-0.5"
+                        />
+                      ) : (
+                        effectiveMax != null ? effectiveMax : '--'
+                      )}
                     </td>
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-1.5">
@@ -677,6 +948,70 @@ export default function GradeSandbox({
                   </tr>
                 )
               })
+            )}
+            {/* Add assignment row in edit mode */}
+            {isEditMode && (
+              <tr className="border-t border-dashed border-[#1F1F1F]">
+                <td className="p-3">
+                  <input
+                    type="text"
+                    value={newAssignment.name}
+                    onChange={(e) => setNewAssignment(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="New assignment name"
+                    className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-xs text-[#F5F5F5] placeholder-[#525252] px-2 py-1 w-full"
+                  />
+                </td>
+                {syllabus && isConfirmed && (
+                  <td className="p-3 hidden md:table-cell">
+                    <select
+                      value={newAssignment.groupId}
+                      onChange={(e) => setNewAssignment(prev => ({ ...prev, groupId: e.target.value }))}
+                      className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[11px] text-[#A3A3A3] px-1 py-0.5 w-full"
+                    >
+                      <option value="">No group</option>
+                      {componentGroups?.map(g => (
+                        <option key={g.id} value={g.id}>{g.name} ({Math.round(g.weight * 100)}%)</option>
+                      ))}
+                    </select>
+                  </td>
+                )}
+                <td className="p-3 hidden sm:table-cell">
+                  <input
+                    type="date"
+                    value={newAssignment.dueDate}
+                    onChange={(e) => setNewAssignment(prev => ({ ...prev, dueDate: e.target.value }))}
+                    className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[11px] text-[#A3A3A3] px-1 py-0.5"
+                  />
+                </td>
+                <td className="p-3 text-right">
+                  <input
+                    type="number"
+                    value={newAssignment.score}
+                    onChange={(e) => setNewAssignment(prev => ({ ...prev, score: e.target.value }))}
+                    placeholder="Score"
+                    className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[11px] text-center w-14 px-1 py-0.5"
+                  />
+                </td>
+                <td className="p-3 text-center">
+                  <input
+                    type="number"
+                    value={newAssignment.pointsPossible}
+                    onChange={(e) => setNewAssignment(prev => ({ ...prev, pointsPossible: e.target.value }))}
+                    placeholder="Max"
+                    className="bg-[#0A0A0A] border border-[#1F1F1F] rounded text-[11px] text-center w-14 px-1 py-0.5"
+                  />
+                </td>
+                <td className="p-3 text-center">
+                  <button
+                    onClick={handleAddAssignment}
+                    disabled={addSaving || !newAssignment.name.trim()}
+                    className="text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded px-2.5 py-1 transition-colors flex items-center gap-1 mx-auto"
+                  >
+                    <Plus size={12} />
+                    {addSaving ? '...' : 'Add'}
+                  </button>
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
