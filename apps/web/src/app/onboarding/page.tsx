@@ -370,6 +370,18 @@ export default function Onboarding() {
                 </div>
               ) : (
                 <>
+                  <p className="text-[#525252] text-xs mb-4">
+                    Sign in with CalNet?{' '}
+                    <a
+                      href="https://www.gradescope.com/account/edit"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-400 hover:text-blue-300 underline"
+                    >
+                      Create a Gradescope password
+                    </a>{' '}
+                    first, then use that email and password here.
+                  </p>
                   <div className="space-y-3 mb-4">
                     <div>
                       <label className="text-xs text-[#A3A3A3] mb-1 block">Email</label>

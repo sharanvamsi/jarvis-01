@@ -8,6 +8,7 @@ import SetupGuide from './SetupGuide';
 import { type ConnectionStatus, type SaveStatus, formatLastSync } from './types';
 
 const SETUP_STEPS = [
+  { text: 'Sign in with CalNet? Create a Gradescope password at', link: { label: 'Account Settings', href: 'https://www.gradescope.com/account/edit' } },
   { text: 'Use the same email and password you use to sign in at', link: { label: 'gradescope.com', href: 'https://www.gradescope.com' } },
   { text: 'Jarvis uses read-only access — it never submits or modifies your work' },
   { text: 'Credentials are encrypted with AES-256-GCM before storage' },

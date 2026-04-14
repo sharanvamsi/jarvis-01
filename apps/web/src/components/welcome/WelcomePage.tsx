@@ -195,6 +195,13 @@ export function WelcomePage() {
                     distributions
                   </span>
                 </li>
+                <li className="flex items-start gap-3">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#A3A3A3] mt-2 shrink-0" />
+                  <span className="text-[#A3A3A3] text-sm leading-relaxed">
+                    Import or paste your syllabus — Jarvis extracts grading
+                    weights, drop policies, and clobber rules automatically
+                  </span>
+                </li>
               </ul>
             </div>
             <GradeProjectionMockup />

@@ -4,17 +4,10 @@ import React, { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 const scenarios = [
-  { grade: "B", finalScore: 78, confidence: "Medium" },
-  { grade: "B+", finalScore: 85, confidence: "High" },
-  { grade: "A-", finalScore: 92, confidence: "High" },
+  { grade: "B", finalScore: 78 },
+  { grade: "B+", finalScore: 85 },
+  { grade: "A-", finalScore: 92 },
 ] as const;
-
-type Confidence = (typeof scenarios)[number]["confidence"];
-
-const confidenceColor: Record<Confidence, string> = {
-  Medium: "text-amber-400 bg-amber-500/10 border-amber-500/20",
-  High: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-};
 
 // Fake BerkeleyTime distribution segments (percentages that add to 100)
 const distribution = [
@@ -48,11 +41,6 @@ export default function GradeProjectionMockup() {
           <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
           <span className="text-[#F5F5F5] text-sm font-medium">CS 162</span>
         </div>
-        <span
-          className={`text-[11px] px-2 py-0.5 rounded-full border ${confidenceColor[s.confidence]}`}
-        >
-          {s.confidence} confidence
-        </span>
       </div>
 
       {/* Projected grade */}

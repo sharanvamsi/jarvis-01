@@ -9,6 +9,7 @@ import {
 
 const BASE_URL = 'https://bcourses.berkeley.edu/api/v1';
 const THRESHOLD_MINUTES = 30;
+const COURSE_CONCURRENCY = 3;
 
 interface CanvasCourseData {
   id: number;
@@ -354,128 +355,132 @@ export async function runCanvasSync(userId: string): Promise<void> {
     }
 
     // Step 6: Fetch assignments only for selected/current courses
-    // Process courses sequentially to avoid Canvas API rate limits (429s)
-    // at scale. Inner fetches (assignments + submissions + announcements)
-    // run in parallel per course — 3 concurrent requests is fine.
-    for (const courseId of courseIdsToSync) {
-      try {
-        // Fetch assignments, submissions, announcements in parallel
-        const [assignmentsData, submissionsData, announcementsData] = await Promise.all([
-          fetchPaginated<CanvasAssignmentData>(
-            `${BASE_URL}/courses/${courseId}/assignments?per_page=100`, token
-          ),
-          fetchPaginated<CanvasSubmissionData>(
-            `${BASE_URL}/courses/${courseId}/students/submissions?student_ids[]=self&per_page=100`, token
-          ),
-          fetchPaginated<CanvasAnnouncementData>(
-            `${BASE_URL}/courses/${courseId}/discussion_topics?only_announcements=true&per_page=100`, token
-          ),
-        ]);
+    // Process courses in batches of COURSE_CONCURRENCY to reduce total sync time.
+    // Inner fetches (assignments + submissions + announcements) run in parallel
+    // per course — up to 3 × COURSE_CONCURRENCY concurrent Canvas API calls.
+    // fetchWithRetry handles 429s with exponential backoff if we hit rate limits.
+    for (let i = 0; i < courseIdsToSync.length; i += COURSE_CONCURRENCY) {
+      const batch = courseIdsToSync.slice(i, i + COURSE_CONCURRENCY);
+      await Promise.allSettled(batch.map(async (courseId) => {
+        try {
+          // Fetch assignments, submissions, announcements in parallel
+          const [assignmentsData, submissionsData, announcementsData] = await Promise.all([
+            fetchPaginated<CanvasAssignmentData>(
+              `${BASE_URL}/courses/${courseId}/assignments?per_page=100`, token
+            ),
+            fetchPaginated<CanvasSubmissionData>(
+              `${BASE_URL}/courses/${courseId}/students/submissions?student_ids[]=self&per_page=100`, token
+            ),
+            fetchPaginated<CanvasAnnouncementData>(
+              `${BASE_URL}/courses/${courseId}/discussion_topics?only_announcements=true&per_page=100`, token
+            ),
+          ]);
 
-        recordsFetched += assignmentsData.length + submissionsData.length + announcementsData.length;
+          recordsFetched += assignmentsData.length + submissionsData.length + announcementsData.length;
 
-        // Build submission map
-        const submissionMap = new Map<number, CanvasSubmissionData>();
-        for (const sub of submissionsData) {
-          submissionMap.set(sub.assignment_id, sub);
-        }
-
-        // Find the Course record for this canvas course
-        const rawCourse = await db.rawCanvasCourse.findUnique({
-          where: { userId_canvasCourseId: { userId, canvasCourseId: courseId } },
-        });
-        const normalizedCode = normalizeCourseCode(rawCourse?.courseCode || rawCourse?.name || '');
-        const term = rawCourse?.term || 'UNKNOWN';
-        const courseRecord = await db.course.findUnique({
-          where: { courseCode_term: { courseCode: normalizedCode, term } },
-        });
-
-        // Batch all DB writes into a single transaction
-        const txOps: any[] = [];
-
-        for (const assignment of assignmentsData) {
-          const canvasAssignmentId = String(assignment.id);
-          const dueDate = assignment.due_at ? new Date(assignment.due_at) : null;
-          const submission = submissionMap.get(assignment.id) || null;
-
-          // Upsert unified Assignment + UserAssignment if we have a course record
-          if (courseRecord) {
-            const assignmentId = `canvas_${assignment.id}`;
-            txOps.push(db.assignment.upsert({
-              where: { id: assignmentId },
-              create: {
-                id: assignmentId,
-                courseId: courseRecord.id,
-                name: assignment.name,
-                assignmentType: inferAssignmentType(assignment.name, assignment.submission_types || []),
-                dueDate,
-                pointsPossible: assignment.points_possible,
-                submissionTypes: assignment.submission_types || [],
-                htmlUrl: assignment.html_url,
-                canvasId: canvasAssignmentId,
-                isCurrentSemester: courseRecord.isCurrentSemester,
-              },
-              update: {
-                name: assignment.name,
-                dueDate,
-                pointsPossible: assignment.points_possible,
-                htmlUrl: assignment.html_url,
-              },
-            }));
-
-            const status = deriveStatus(submission, dueDate);
-            txOps.push(db.userAssignment.upsert({
-              where: { userId_assignmentId: { userId, assignmentId } },
-              create: {
-                userId,
-                assignmentId,
-                score: submission?.score ?? null,
-                grade: submission?.grade ?? null,
-                status,
-                submittedAt: submission?.submitted_at ? new Date(submission.submitted_at) : null,
-              },
-              update: {
-                score: submission?.score ?? null,
-                grade: submission?.grade ?? null,
-                status,
-                submittedAt: submission?.submitted_at ? new Date(submission.submitted_at) : null,
-              },
-            }));
-            recordsUpdated++;
+          // Build submission map
+          const submissionMap = new Map<number, CanvasSubmissionData>();
+          for (const sub of submissionsData) {
+            submissionMap.set(sub.assignment_id, sub);
           }
-        }
 
-        // Process announcements
-        for (const ann of announcementsData) {
-          const canvasAnnouncementId = String(ann.id);
+          // Find the Course record for this canvas course
+          const rawCourse = await db.rawCanvasCourse.findUnique({
+            where: { userId_canvasCourseId: { userId, canvasCourseId: courseId } },
+          });
+          const normalizedCode = normalizeCourseCode(rawCourse?.courseCode || rawCourse?.name || '');
+          const term = rawCourse?.term || 'UNKNOWN';
+          const courseRecord = await db.course.findUnique({
+            where: { courseCode_term: { courseCode: normalizedCode, term } },
+          });
 
-          if (courseRecord) {
-            txOps.push(db.canvasAnnouncement.upsert({
-              where: { canvasId: canvasAnnouncementId },
-              create: {
-                courseId: courseRecord.id,
-                canvasId: canvasAnnouncementId,
-                title: ann.title,
-                message: ann.message,
-                postedAt: ann.posted_at ? new Date(ann.posted_at) : null,
-                htmlUrl: ann.html_url,
-              },
-              update: {
-                title: ann.title,
-                message: ann.message,
-                postedAt: ann.posted_at ? new Date(ann.posted_at) : null,
-              },
-            }));
+          // Batch all DB writes into a single transaction
+          const txOps: any[] = [];
+
+          for (const assignment of assignmentsData) {
+            const canvasAssignmentId = String(assignment.id);
+            const dueDate = assignment.due_at ? new Date(assignment.due_at) : null;
+            const submission = submissionMap.get(assignment.id) || null;
+
+            // Upsert unified Assignment + UserAssignment if we have a course record
+            if (courseRecord) {
+              const assignmentId = `canvas_${assignment.id}`;
+              txOps.push(db.assignment.upsert({
+                where: { id: assignmentId },
+                create: {
+                  id: assignmentId,
+                  courseId: courseRecord.id,
+                  name: assignment.name,
+                  assignmentType: inferAssignmentType(assignment.name, assignment.submission_types || []),
+                  dueDate,
+                  pointsPossible: assignment.points_possible,
+                  submissionTypes: assignment.submission_types || [],
+                  htmlUrl: assignment.html_url,
+                  canvasId: canvasAssignmentId,
+                  isCurrentSemester: courseRecord.isCurrentSemester,
+                },
+                update: {
+                  name: assignment.name,
+                  dueDate,
+                  pointsPossible: assignment.points_possible,
+                  htmlUrl: assignment.html_url,
+                },
+              }));
+
+              const status = deriveStatus(submission, dueDate);
+              txOps.push(db.userAssignment.upsert({
+                where: { userId_assignmentId: { userId, assignmentId } },
+                create: {
+                  userId,
+                  assignmentId,
+                  score: submission?.score ?? null,
+                  grade: submission?.grade ?? null,
+                  status,
+                  submittedAt: submission?.submitted_at ? new Date(submission.submitted_at) : null,
+                },
+                update: {
+                  score: submission?.score ?? null,
+                  grade: submission?.grade ?? null,
+                  status,
+                  submittedAt: submission?.submitted_at ? new Date(submission.submitted_at) : null,
+                },
+              }));
+              recordsUpdated++;
+            }
           }
-        }
 
-        // Execute all writes in a single transaction
-        if (txOps.length > 0) {
-          await db.$transaction(txOps);
+          // Process announcements
+          for (const ann of announcementsData) {
+            const canvasAnnouncementId = String(ann.id);
+
+            if (courseRecord) {
+              txOps.push(db.canvasAnnouncement.upsert({
+                where: { canvasId: canvasAnnouncementId },
+                create: {
+                  courseId: courseRecord.id,
+                  canvasId: canvasAnnouncementId,
+                  title: ann.title,
+                  message: ann.message,
+                  postedAt: ann.posted_at ? new Date(ann.posted_at) : null,
+                  htmlUrl: ann.html_url,
+                },
+                update: {
+                  title: ann.title,
+                  message: ann.message,
+                  postedAt: ann.posted_at ? new Date(ann.posted_at) : null,
+                },
+              }));
+            }
+          }
+
+          // Execute all writes in a single transaction
+          if (txOps.length > 0) {
+            await db.$transaction(txOps);
+          }
+        } catch (err) {
+          console.error(`[canvas] Failed to sync course ${courseId}:`, err);
         }
-      } catch (err) {
-        console.error(`[canvas] Failed to sync course ${courseId}:`, err);
-      }
+      }));
     }
 
     console.log(`[canvas] Fetched + wrote assignments in ${Date.now() - syncStart}ms`);
