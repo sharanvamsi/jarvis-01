@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { CollapsibleSection } from '@/components/ui/CollapsibleSection'
 import { getCourseColor } from '@/lib/courseColors'
-import { daysOverdue } from '@/lib/utils'
+import { daysOverdue, getAssignmentUrl } from '@/lib/utils'
 
 interface MissingAssignment {
   id: string
@@ -83,7 +83,7 @@ export function MissingSection({ missing, semesterKey }: Props) {
     >
       {visible.map((a) => {
         const courseColor = getCourseColor(a.courseCode)
-        const url = a.htmlUrl || a.specUrl
+        const url = getAssignmentUrl(a)
         const cardContent = (
           <div
             className={`relative bg-[#111111] border border-[#1F1F1F] border-l-2 border-l-red-500 rounded-md p-4 hover:bg-[#161616] transition-colors${url ? ' cursor-pointer' : ''}`}

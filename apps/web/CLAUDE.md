@@ -149,12 +149,13 @@ Get first userAssignment: assignment.userAssignments?.[0]
 ## Dashboard Layout (current)
 Left column (top to bottom):
   1. Due Soon — future assignments only, sorted nearest first
-  2. Missing Assignments — collapsible, amber header, past due
-  3. Course Updates — Canvas + Ed staff posts merged, newest first
-  4. Student Questions — collapsible, sorted by engagement
+  2. Updates — tabbed: Announcements (Canvas + Ed staff) | Questions (Ed)
+  3. Missing Assignments — collapsible, amber header, past due, dismissible
 
 Right column:
-  1. Today's Classes (from Google Calendar)
+  1. Today's Events (from Google Calendar, links to Google Calendar)
+  2. Office Hours Today
+  3. Upcoming Exams
 
 ## Data Rules
 - Due Soon: dueDate >= now, sorted asc, 14-day window
