@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
+import { useSession } from "next-auth/react";
 import {
   ArrowRight,
   BookOpen,
@@ -20,6 +21,9 @@ const HeroCanvas = dynamic(() => import("./HeroCanvas"), { ssr: false });
 
 export function WelcomePage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { status } = useSession();
+  const isAuthed = status === "authenticated";
+  const ctaHref = isAuthed ? "/" : "/onboarding";
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#F5F5F5] overflow-x-hidden">
@@ -41,10 +45,10 @@ export function WelcomePage() {
               How it works
             </a>
             <Link
-              href="/onboarding"
+              href={ctaHref}
               className="text-[13px] font-medium text-[#F5F5F5] hover:text-white transition-colors"
             >
-              Sign in
+              {isAuthed ? "Dashboard" : "Sign in"}
             </Link>
           </div>
 
@@ -67,10 +71,10 @@ export function WelcomePage() {
               How it works
             </a>
             <Link
-              href="/onboarding"
+              href={ctaHref}
               className="text-sm font-medium text-[#F5F5F5]"
             >
-              Sign in
+              {isAuthed ? "Dashboard" : "Sign in"}
             </Link>
           </div>
         )}
@@ -106,7 +110,7 @@ export function WelcomePage() {
 
           <div className="mt-8 flex flex-col sm:flex-row items-start gap-4">
             <Link
-              href="/onboarding"
+              href={ctaHref}
               className="group inline-flex items-center gap-2 bg-[#F5F5F5] text-[#0A0A0A] px-6 py-3 text-sm font-semibold hover:bg-white transition-colors"
             >
               Get started
@@ -317,7 +321,7 @@ export function WelcomePage() {
               Built by a Berkeley student, for Berkeley students.
             </p>
             <Link
-              href="/onboarding"
+              href={ctaHref}
               className="group inline-flex items-center gap-2 bg-[#F5F5F5] text-[#0A0A0A] px-6 py-3 text-sm font-semibold hover:bg-white transition-colors"
             >
               Get started

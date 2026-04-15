@@ -39,9 +39,19 @@ export default function Onboarding() {
 
   useEffect(() => {
     if (status === 'authenticated' && step === 'signin') {
-      setStep('canvas');
+      // Check if user already completed onboarding — redirect to dashboard
+      fetch('/api/tokens/canvas/status')
+        .then(res => res.json())
+        .then(data => {
+          if (data.connected) {
+            router.push('/');
+          } else {
+            setStep('canvas');
+          }
+        })
+        .catch(() => setStep('canvas'));
     }
-  }, [status, step]);
+  }, [status, step, router]);
 
   const stepIndex = { signin: 0, canvas: 1, courses: 2, gradescope: 3, websites: 4, done: 5 };
   const firstName = session?.user?.name?.split(' ')[0] ?? 'there';
