@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { BookOpen, FileText, Mail, MessageSquare, Users, ExternalLink, Settings } from 'lucide-react'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { SourceBadge } from '@/components/ui/SourceBadge'
-import { stripHtml, relativeTime } from '@/lib/utils'
+import { stripHtml, relativeTime, getAssignmentUrl } from '@/lib/utils'
 
 type UserAssignment = {
   id: string
@@ -23,6 +23,7 @@ type Assignment = {
   dueDate: Date | null
   pointsPossible: number | null
   htmlUrl: string | null
+  specUrl: string | null
   canvasId: string | null
   gradescopeId: string | null
   userAssignments: UserAssignment[]
@@ -271,8 +272,9 @@ export function CoursesClient({ courses }: { courses: Course[] }) {
                   {courseAssignments.slice(0, 5).map((assignment) => {
                     const ua = assignment.userAssignments?.[0]
                     const status = (ua?.status ?? 'ungraded') as 'graded' | 'submitted' | 'missing' | 'late' | 'ungraded'
-                    return (
-                      <div key={assignment.id} className="bg-[#111111] border border-[#1F1F1F] rounded-md p-4">
+                    const url = getAssignmentUrl(assignment)
+                    const card = (
+                      <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4${url ? ' hover:bg-[#161616] transition-colors cursor-pointer' : ''}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
@@ -290,6 +292,13 @@ export function CoursesClient({ courses }: { courses: Course[] }) {
                           />
                         </div>
                       </div>
+                    )
+                    return url ? (
+                      <a key={assignment.id} href={url} target="_blank" rel="noopener noreferrer" className="block">
+                        {card}
+                      </a>
+                    ) : (
+                      <div key={assignment.id}>{card}</div>
                     )
                   })}
                   {courseAssignments.length === 0 && (
@@ -518,8 +527,9 @@ function AssignmentsTab({
         {filtered.map((assignment) => {
           const ua = assignment.userAssignments?.[0]
           const status = (ua?.status ?? 'ungraded') as 'graded' | 'submitted' | 'missing' | 'late' | 'ungraded'
-          return (
-            <div key={assignment.id} className="bg-[#111111] border border-[#1F1F1F] rounded-md p-4">
+          const url = getAssignmentUrl(assignment)
+          const aCard = (
+            <div className={`bg-[#111111] border border-[#1F1F1F] rounded-md p-4${url ? ' hover:bg-[#161616] transition-colors cursor-pointer' : ''}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -543,6 +553,13 @@ function AssignmentsTab({
                 </div>
               </div>
             </div>
+          )
+          return url ? (
+            <a key={assignment.id} href={url} target="_blank" rel="noopener noreferrer" className="block">
+              {aCard}
+            </a>
+          ) : (
+            <div key={assignment.id}>{aCard}</div>
           )
         })}
         {filtered.length === 0 && (
