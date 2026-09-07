@@ -216,13 +216,13 @@ function buildContent(pages: PageInput[], maxChars: number = 500_000): string {
 // Prompts
 // ---------------------------------------------------------------------------
 
-function baseSystemPrompt(courseUrl: string): string {
+function baseSystemPrompt(courseUrl: string, semester: string): string {
   return `You are extracting structured course data from a Berkeley course website.
 The content below is cleaned markdown from multiple pages of the course website (${courseUrl}).
 Each page is separated by a "--- PAGE: <url> ---" header.
 
 IMPORTANT RULES:
-- Only extract data for the current semester (Spring 2026). Reject dates from other years.
+- Only extract data for the target semester (${semester}). Reject content from other semesters.
 - When you see a relative URL, the base URL is: ${courseUrl}
 - Set confidence to 1.0 when data is explicitly stated on the page.
 - Set confidence to 0.7-0.9 when you are inferring from partial information.
@@ -631,10 +631,11 @@ function validateGradingPolicy(
 export async function extractCourseData(
   pages: PageInput[],
   courseUrl: string,
+  semester: string,
 ): Promise<ExtractionResult> {
   const client = new Anthropic();
   const startMs = Date.now();
-  const base = baseSystemPrompt(courseUrl);
+  const base = baseSystemPrompt(courseUrl, semester);
 
   const result: ExtractionResult = {
     assignments: [],

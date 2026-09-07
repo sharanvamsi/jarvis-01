@@ -12,9 +12,10 @@ function hashText(text: string): string {
 
 export async function syncSyllabus(userId: string): Promise<void> {
   console.log(`[syllabus] Starting sync for user ${userId}`);
+  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { currentSemester: true } });
 
   const allEnrollments = await db.enrollment.findMany({
-    where: { userId },
+    where: { userId, course: { term: user.currentSemester } },
     include: {
       course: {
         include: {
@@ -43,7 +44,6 @@ export async function syncSyllabus(userId: string): Promise<void> {
 
   for (const enrollment of enrollments) {
     const course = enrollment.course;
-    if (!course.isCurrentSemester) continue;
 
     // Skip if already confirmed this semester — syllabus rarely changes
     if (course.syllabus?.confirmedAt) {

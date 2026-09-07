@@ -1,6 +1,7 @@
 import { db } from '../lib/db';
 import { decrypt } from '../lib/crypto';
 import { filterByUserSelection } from '../lib/enrollment-filter';
+import { observeUserSemester, parseSemester } from '@jarvis/db';
 
 const BASE_URL = 'https://us.edstem.org/api';
 const THRESHOLD_MINUTES = 60;
@@ -191,15 +192,26 @@ export async function runEdSync(userId: string): Promise<void> {
     token = decrypt(syncToken.accessToken);
   } catch (e) {
     console.error('[ed] Failed to decrypt token:', e);
-    return;
+    throw new Error('Failed to decrypt Ed token');
   }
+
+  // Ed's course index is the handoff signal for this integration. Fetch it
+  // before the freshness gate so a newly published term cannot be hidden by
+  // last semester's successful sync.
+  const userEdCourses = await fetchEdCourses(token);
+  const currentSemester = await observeUserSemester(
+    db,
+    userId,
+    userEdCourses.map(course => `${course.session} ${course.year}`),
+    'ed'
+  );
 
   // Freshness check via SyncMetadata
   const meta = await db.syncMetadata.findUnique({
     where: { userId_source: { userId, source: 'ed' } },
   });
 
-  if (meta?.lastSynced) {
+  if (meta?.lastSynced && meta.contentHash === currentSemester) {
     const minutesSince =
       (Date.now() - meta.lastSynced.getTime()) / 60000;
     if (minutesSince < THRESHOLD_MINUTES) {
@@ -228,7 +240,7 @@ export async function runEdSync(userId: string): Promise<void> {
   try {
     // Get enrolled courses with Ed configured
     const enrollments = await db.enrollment.findMany({
-      where: { userId },
+      where: { userId, course: { term: currentSemester } },
       include: {
         course: {
           select: {
@@ -248,11 +260,10 @@ export async function runEdSync(userId: string): Promise<void> {
 
     if (missingEdId) {
       // Auto-discover Ed course IDs only when needed
-      try {
-        const userEdCourses = await fetchEdCourses(token);
-        console.log(`[ed] Discovering Ed course IDs (${userEdCourses.length} Ed courses found)`);
+      console.log(`[ed] Discovering Ed course IDs (${userEdCourses.length} Ed courses found)`);
 
         for (const edCourse of userEdCourses) {
+          if (parseSemester(`${edCourse.session} ${edCourse.year}`) !== currentSemester) continue;
           const edCode = edCourse.code.toUpperCase().replace(/\s+/g, ' ').trim();
           const matched = filteredEnrollments.find((e) => {
             if (e.course.edCourseId) return false; // already linked
@@ -280,13 +291,10 @@ export async function runEdSync(userId: string): Promise<void> {
             await db.course.update({
               where: { id: matched.course.id },
               data: { edCourseId: String(edCourse.id) },
-            }).catch((e: any) => console.error('[ed] Failed to update edCourseId:', e.message));
+            });
             matched.course.edCourseId = String(edCourse.id);
           }
         }
-      } catch (e: any) {
-        console.error('[ed] Failed to fetch Ed courses for discovery:', e.message);
-      }
     }
 
     const edCourses = filteredEnrollments
@@ -392,6 +400,10 @@ export async function runEdSync(userId: string): Promise<void> {
       }
     }
 
+    if (failedCourses.length > 0) {
+      throw new Error(`Failed Ed courses: ${failedCourses.join(', ')}`);
+    }
+
     // Update sync log
     await db.syncLog.update({
       where: { id: syncLog.id },
@@ -414,12 +426,14 @@ export async function runEdSync(userId: string): Promise<void> {
       update: {
         lastSynced: new Date(),
         needsUnification: true,
+        contentHash: currentSemester,
       },
       create: {
         userId,
         source: 'ed',
         lastSynced: new Date(),
         needsUnification: true,
+        contentHash: currentSemester,
       },
     });
 
@@ -440,4 +454,3 @@ export async function runEdSync(userId: string): Promise<void> {
     throw error;
   }
 }
-

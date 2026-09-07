@@ -22,9 +22,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
-  // Verify user is enrolled in this course
+  // Manual work may only be added to the user's active semester.
+  const user = await db.user.findUnique({
+    where: { id: session.user.id },
+    select: { currentSemester: true },
+  })
   const enrollment = await db.enrollment.findFirst({
-    where: { userId: session.user.id, courseId },
+    where: { userId: session.user.id, courseId, course: { term: user?.currentSemester } },
   })
   if (!enrollment) {
     return NextResponse.json({ error: 'Not enrolled' }, { status: 403 })
@@ -32,6 +36,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const assignment = await db.$transaction(async (tx) => {
+      if (groupId) {
+        const group = await tx.componentGroup.findFirst({
+          where: { id: groupId, syllabus: { courseId } },
+          select: { id: true },
+        })
+        if (!group) throw new Error('Assignment group does not belong to this course')
+      }
       const a = await tx.assignment.create({
         data: {
           courseId,

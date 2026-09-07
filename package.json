@@ -16,7 +16,8 @@
     "db:generate": "npm run generate --workspace=packages/db",
     "db:migrate:dev": "npm run migrate:dev --workspace=packages/db",
     "db:migrate:deploy": "npm run migrate:deploy --workspace=packages/db",
-    "db:studio": "npm run studio --workspace=packages/db"
+    "db:studio": "npm run studio --workspace=packages/db",
+    "test:semester": "tsx --test packages/db/test/semester.test.ts"
   },
   "engines": {
     "node": ">=20.0.0"

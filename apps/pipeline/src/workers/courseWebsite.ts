@@ -10,12 +10,11 @@
 import { createHash } from 'node:crypto';
 import { db } from '../lib/db';
 import type { Prisma } from '@jarvis/db';
+import { parseSemester } from '@jarvis/db';
 import { crawlSite } from '../lib/website-crawler';
 import { extractCourseData, type ExtractionResult } from '../lib/course-extractor';
 
 const THRESHOLD_HOURS = 24;
-const CURRENT_YEAR = new Date().getFullYear();
-
 function formatTime(time24: string): string {
   const [h, m] = time24.split(':').map(Number);
   const period = h >= 12 ? 'PM' : 'AM';
@@ -29,13 +28,15 @@ async function writeExtractionData(
   extraction: ExtractionResult,
   combinedHash: string,
   now: Date,
+  semester: string,
 ): Promise<{ assignments: number; officeHours: number; staff: number; exams: number; syllabusWeeks: number; gradingPolicy: boolean }> {
   // --- Validate assignments ---
   const validAssignments = extraction.assignments.filter((a) => {
     if (!a.name) return false;
     if (a.due_date) {
       const year = parseInt(a.due_date.split('-')[0]);
-      if (year !== CURRENT_YEAR) return false;
+      const expectedYear = 2000 + Number(semester.slice(2));
+      if (year !== expectedYear) return false;
     }
     if (a.spec_url && !a.spec_url.startsWith('https://')) {
       a.spec_url = null;
@@ -264,6 +265,7 @@ async function writeExtractionData(
 
 export async function runCourseWebsiteSync(userId: string): Promise<void> {
   console.log(`[website] Starting sync for user ${userId}`);
+  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { currentSemester: true } });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -273,17 +275,17 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
 
   // Get all enrolled courses with website URLs (no user-selection filter — data is global)
   const enrollments = await db.enrollment.findMany({
-    where: { userId },
+    where: { userId, course: { term: user.currentSemester } },
     include: {
       course: {
-        select: { id: true, courseCode: true, websiteUrl: true },
+        select: { id: true, courseCode: true, websiteUrl: true, term: true },
       },
     },
   });
 
   const coursesToSync = enrollments
     .map((e) => e.course)
-    .filter((c) => !!c.websiteUrl);
+    .filter((c) => !!c.websiteUrl && parseSemester(c.term) !== null);
 
   console.log(`[website] Found ${coursesToSync.length} courses with websites`);
 
@@ -356,7 +358,7 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
 
       // Extract with Haiku
       console.log(`[website] ${code}: content changed, extracting with LLM (${extractablePages.length} pages)...`);
-      const extraction = await extractCourseData(extractablePages, url);
+      const extraction = await extractCourseData(extractablePages, url, course.term!);
 
       console.log(
         `[website] ${code}: extracted — ` +
@@ -371,7 +373,7 @@ export async function runCourseWebsiteSync(userId: string): Promise<void> {
 
       // Write to DB
       const counts = await writeExtractionData(
-        course.id, url, extraction, summary.combinedContentHash, now,
+        course.id, url, extraction, summary.combinedContentHash, now, course.term!,
       );
       totalCreated += counts.assignments + counts.officeHours + counts.staff +
         counts.exams + counts.syllabusWeeks;

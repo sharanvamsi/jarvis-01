@@ -8,11 +8,41 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const logs = await db.syncLog.findMany({
-    where: { userId: session.user.id },
-    orderBy: { startedAt: 'desc' },
-    take: 20,
-  })
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const [logs, user, handoff, canvasToken] = await Promise.all([
+    db.syncLog.findMany({
+      where: { userId: session.user.id, service: { not: 'semester_handoff' } },
+      orderBy: { startedAt: 'desc' },
+      take: 20,
+    }),
+    db.user.findUnique({
+      where: { id: session.user.id },
+      select: { currentSemester: true },
+    }),
+    db.syncLog.findFirst({
+      where: {
+        userId: session.user.id,
+        service: 'semester_handoff',
+        startedAt: { gte: sevenDaysAgo },
+      },
+      orderBy: { startedAt: 'desc' },
+      select: { errorMessage: true, startedAt: true },
+    }),
+    db.syncToken.findUnique({
+      where: { userId_service: { userId: session.user.id, service: 'canvas' } },
+      select: { id: true },
+    }),
+  ])
+
+  const selectedCurrentCourses = user
+    ? await db.enrollment.count({
+        where: {
+          userId: session.user.id,
+          userSelected: true,
+          course: { term: user.currentSemester },
+        },
+      })
+    : 0
 
   // Most recent per service
   const byService: Record<string, {
@@ -35,5 +65,13 @@ export async function GET() {
 
   const isRunning = Object.values(byService).some(s => s.status === 'running')
 
-  return NextResponse.json({ isRunning, services: byService })
+  return NextResponse.json({
+    isRunning,
+    services: byService,
+    currentSemester: user?.currentSemester ?? null,
+    semesterHandoff:
+      handoff && canvasToken && selectedCurrentCourses === 0
+        ? { message: handoff.errorMessage, detectedAt: handoff.startedAt }
+        : null,
+  })
 }

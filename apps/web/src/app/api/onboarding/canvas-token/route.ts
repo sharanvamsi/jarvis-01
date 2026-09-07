@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { encrypt } from '@/lib/encrypt'
 import { fetchCanvasCourses } from '@/lib/canvas-utils'
+import { observeUserSemester } from '@jarvis/db'
 
 export async function POST(req: NextRequest) {
   const session = await auth()
@@ -23,15 +24,22 @@ export async function POST(req: NextRequest) {
   const currentSemester = user?.currentSemester ?? ''
 
   // Validate token by fetching courses from Canvas
-  let courses
+  let discovery
   try {
-    courses = await fetchCanvasCourses(token, currentSemester)
+    discovery = await fetchCanvasCourses(token, currentSemester)
   } catch (error) {
     return NextResponse.json(
       { error: 'Invalid Canvas token or Canvas is unreachable' },
       { status: 400 }
     )
   }
+
+  const observedSemester = await observeUserSemester(
+    db,
+    session.user.id,
+    [discovery.observedSemester],
+    'canvas-onboarding'
+  )
 
   // Token is valid — encrypt and save
   const encrypted = encrypt(token.trim())
@@ -50,5 +58,5 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  return NextResponse.json({ success: true, courses })
+  return NextResponse.json({ success: true, courses: discovery.courses, currentSemester: observedSemester })
 }

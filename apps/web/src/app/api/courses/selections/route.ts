@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { normalizeCourseCode, extractSemester } from '@/lib/canvas-utils'
-import { getCurrentTerms } from '@/lib/semester'
 
 /**
  * POST /api/courses/selections
@@ -30,40 +29,31 @@ export async function POST(req: NextRequest) {
 
   const userId = session.user.id
 
-  const CURRENT_TERMS = getCurrentTerms()
+  const user = await db.user.findUnique({ where: { id: userId }, select: { currentSemester: true } })
+  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
   await db.$transaction(async (tx) => {
     for (const canvasId of selectedCanvasIds) {
-      let course = await tx.course.findFirst({ where: { canvasId } })
+      const raw = await tx.rawCanvasCourse.findUnique({
+        where: { userId_canvasCourseId: { userId, canvasCourseId: canvasId } },
+      })
+      if (!raw?.name || !raw.isCurrent) continue
+      const courseCode = normalizeCourseCode(raw.courseCode ?? raw.name)
+      const term = raw.term ?? extractSemester(raw.name, raw.courseCode ?? '')
+      if (term !== user.currentSemester) continue
 
-      if (!course) {
-        const raw = await tx.rawCanvasCourse.findUnique({
-          where: { userId_canvasCourseId: { userId, canvasCourseId: canvasId } },
-        })
-        if (!raw || !raw.name) continue
-
-        const courseCode = normalizeCourseCode(raw.courseCode ?? raw.name)
-        const term = raw.term ?? extractSemester(raw.name, raw.courseCode ?? '')
-
-        // Only allow current semester courses
-        if (!CURRENT_TERMS.includes(term)) continue
-
-        course = await tx.course.upsert({
-          where: { courseCode_term: { courseCode, term } },
-          create: {
-            courseCode,
-            courseName: raw.name,
-            term,
-            canvasId,
-            enrollmentState: raw.enrollmentState ?? 'active',
-            isCurrentSemester: true,
-          },
-          update: { canvasId },
-        })
-      } else if (course.term && !CURRENT_TERMS.includes(course.term)) {
-        // Existing course but not current semester — skip
-        continue
-      }
+      const course = await tx.course.upsert({
+        where: { courseCode_term: { courseCode, term } },
+        create: {
+          courseCode,
+          courseName: raw.name,
+          term,
+          canvasId,
+          enrollmentState: raw.enrollmentState ?? 'active',
+          isCurrentSemester: true,
+        },
+        update: { canvasId, isCurrentSemester: true },
+      })
 
       await tx.enrollment.upsert({
         where: { userId_courseId: { userId, courseId: course.id } },

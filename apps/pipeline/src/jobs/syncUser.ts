@@ -30,27 +30,31 @@ export async function syncUser(userId: string, services?: string[]): Promise<voi
     return;
   }
 
-  // Run requested workers in parallel
-  const workerEntries: { name: string; promise: Promise<void> }[] = [];
-  if (shouldRun('canvas'))         workerEntries.push({ name: 'Canvas', promise: runCanvasSync(userId) });
-  if (shouldRun('ed'))             workerEntries.push({ name: 'Ed', promise: runEdSync(userId) });
-  if (shouldRun('calendar'))       workerEntries.push({ name: 'Calendar', promise: runCalendarSync(userId) });
-  if (shouldRun('gradescope'))     workerEntries.push({ name: 'Gradescope', promise: runGradescopeSync(userId) });
-  if (shouldRun('course_website')) workerEntries.push({ name: 'CourseWebsite', promise: runCourseWebsiteSync(userId) });
-
-  const results = await Promise.allSettled(workerEntries.map((w) => w.promise));
-
-  for (const [i, result] of results.entries()) {
-    const name = workerEntries[i].name;
-    if (result.status === 'rejected') {
-      console.error(`[syncUser] ${name} sync failed:`, result.reason);
-    } else {
+  const failures: string[] = [];
+  const run = async (name: string, worker: () => Promise<void>) => {
+    try {
+      await worker();
       console.log(`[syncUser] ${name} sync completed (${Date.now() - t}ms)`);
+    } catch (error) {
+      failures.push(name);
+      console.error(`[syncUser] ${name} sync failed:`, error);
     }
+  };
+
+  // Semester discovery is ordered. Gradescope can reveal a later term than
+  // Canvas, so Canvas gets one cheap course-list recheck afterward. Its
+  // semester-aware freshness gate avoids repeating assignment work otherwise.
+  if (shouldRun('canvas')) await run('Canvas', () => runCanvasSync(userId));
+  if (shouldRun('gradescope')) await run('Gradescope', () => runGradescopeSync(userId));
+  if (shouldRun('canvas') && shouldRun('gradescope')) {
+    await run('Canvas handoff', () => runCanvasSync(userId));
   }
+  if (shouldRun('ed')) await run('Ed', () => runEdSync(userId));
+  if (shouldRun('course_website')) await run('CourseWebsite', () => runCourseWebsiteSync(userId));
+  if (shouldRun('calendar')) await run('Calendar', () => runCalendarSync(userId));
 
   // Post-sync: enrichment (only if course_website ran)
-  if (shouldRun('course_website')) {
+  if (shouldRun('course_website') && !failures.includes('CourseWebsite')) {
     try {
       await enrichAssignmentsWithWebsiteData(userId);
       console.log(`[syncUser] Assignment enrichment completed (${Date.now() - t}ms)`);
@@ -70,7 +74,10 @@ export async function syncUser(userId: string, services?: string[]): Promise<voi
   }
 
   // Post-sync: assignment matching (if any assignment-related worker ran)
-  if (shouldRun('canvas') || shouldRun('gradescope') || shouldRun('course_website')) {
+  const assignmentSourceFailed = failures.some(name =>
+    ['Canvas', 'Canvas handoff', 'Gradescope', 'CourseWebsite'].includes(name)
+  );
+  if ((shouldRun('canvas') || shouldRun('gradescope') || shouldRun('course_website')) && !assignmentSourceFailed) {
     try {
       await runAssignmentMatchingWithGate(userId);
       console.log(`[syncUser] Assignment matching completed (${Date.now() - t}ms)`);
@@ -80,10 +87,14 @@ export async function syncUser(userId: string, services?: string[]): Promise<voi
   }
 
   // Update lastSyncAt + revalidate frontend
-  await db.user.updateMany({
-    where: { id: userId },
-    data: { lastSyncAt: new Date() },
-  });
+  if (failures.length === 0) {
+    await db.user.updateMany({
+      where: { id: userId },
+      data: { lastSyncAt: new Date() },
+    });
+  } else {
+    console.error(`[syncUser] Completed with failures: ${failures.join(', ')}`);
+  }
 
   const webUrl = process.env.WEB_ORIGIN;
   if (webUrl) {
@@ -99,13 +110,15 @@ export async function syncUser(userId: string, services?: string[]): Promise<voi
   }
 
   console.log(`[syncUser] Complete in ${Date.now() - t}ms`);
+  if (failures.length) throw new Error(`Sync failed: ${failures.join(', ')}`);
 }
 
 async function runAssignmentMatching(userId: string): Promise<void> {
   console.log('[matcher] Running assignment matching...');
+  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { currentSemester: true } });
 
   const enrollments = await db.enrollment.findMany({
-    where: { userId },
+    where: { userId, course: { term: user.currentSemester } },
     include: {
       course: {
         include: {
@@ -122,7 +135,6 @@ async function runAssignmentMatching(userId: string): Promise<void> {
 
   for (const enrollment of enrollments) {
     const course = enrollment.course;
-    if (!course.isCurrentSemester) continue;
     if (!course.syllabus?.componentGroups?.length) continue;
 
     const assignments: AssignmentToMatch[] = course.assignments.map((a) => ({
@@ -207,12 +219,13 @@ async function buildAssignmentMatchingHash(
 }
 
 async function runAssignmentMatchingWithGate(userId: string): Promise<void> {
+  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { currentSemester: true } });
   const assignments = await db.assignment.findMany({
     where: {
       course: {
+        term: user.currentSemester,
         enrollments: { some: { userId } },
       },
-      isCurrentSemester: true,
     },
     select: { id: true, name: true, courseId: true },
   });
@@ -246,8 +259,12 @@ async function runAssignmentMatchingWithGate(userId: string): Promise<void> {
 async function enrichAssignmentsWithWebsiteData(userId: string): Promise<void> {
   // Raw course website assignments are course-scoped (universal), so filter
   // via the user's current enrollments.
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { currentSemester: true },
+  });
   const enrollments = await db.enrollment.findMany({
-    where: { userId },
+    where: { userId, course: { term: user.currentSemester } },
     select: { courseId: true },
   });
   const courseIds = enrollments.map(e => e.courseId);

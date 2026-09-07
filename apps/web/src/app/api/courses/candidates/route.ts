@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { normalizeCourseCode, isNonAcademicCourse } from '@/lib/canvas-utils'
-import { getCurrentTerms } from '@/lib/semester'
 
 /**
  * GET /api/courses/candidates
@@ -18,6 +17,8 @@ export async function GET() {
   }
 
   const userId = session.user.id
+  const user = await db.user.findUnique({ where: { id: userId }, select: { currentSemester: true } })
+  const currentSemester = user?.currentSemester
 
   // Read raw courses populated by the pipeline canvas worker
   const rawCourses = await db.rawCanvasCourse.findMany({
@@ -37,15 +38,13 @@ export async function GET() {
 
   // Only show courses from the current semester — past courses
   // can't be synced because Canvas won't serve data for concluded courses
-  const CURRENT_TERMS = getCurrentTerms()
-
   const courses = rawCourses
     .filter((c) => {
       if (!c.name) return false
       if (isNonAcademicCourse(c.name, c.courseCode ?? '')) return false
       // Must be a current semester course
       const term = c.term ?? 'UNKNOWN'
-      if (!CURRENT_TERMS.includes(term)) return false
+      if (!currentSemester || term !== currentSemester) return false
       return true
     })
     .map((c) => ({

@@ -1,3 +1,5 @@
+import { parseSemester } from '@jarvis/db';
+
 const DEPT_ALIASES: Record<string, string> = {
   'COMPSCI': 'CS',
   'EECS': 'EECS',
@@ -25,23 +27,12 @@ const ABBREVIATIONS: Record<string, string> = {
   'mt': 'midterm',
 };
 
-const SEMESTER_PATTERNS: Array<{ markers: string[]; code: string }> = [
-  { markers: ['spring 2026', 'sp26'], code: 'SP26' },
-  { markers: ['fall 2025', 'fa25'], code: 'FA25' },
-  { markers: ['spring 2025', 'sp25'], code: 'SP25' },
-  { markers: ['fall 2024', 'fa24'], code: 'FA24' },
-  { markers: ['spring 2024', 'sp24'], code: 'SP24' },
-  { markers: ['fall 2023', 'fa23'], code: 'FA23' },
-];
-
-const PAST_TERMS = ['Fall 2023', 'Spring 2024', 'Fall 2024', 'Spring 2025', 'Fall 2025'];
-
 export function normalizeCourseCode(code: string): string {
   let normalized = code.trim().toUpperCase();
   // Strip trailing hyphens
   normalized = normalized.replace(/-+$/, '');
   // Strip semester suffixes first: SP24, FA25, etc. (before & NNN since it may follow)
-  normalized = normalized.replace(/\s*(?:SP|FA|SU)\d{2}$/i, '');
+  normalized = normalized.replace(/\s*(?:WI|SP|FA|SU)\d{2}$/i, '');
   // Strip section suffixes: -LEC-001, -DIS-001, etc.
   normalized = normalized.replace(/-(?:LEC|DIS|LAB|SEM|IND|FLD|REC|TUT)-\d+/g, '');
   // Strip " & NNN" section suffixes (e.g., "& 002")
@@ -107,11 +98,7 @@ export function datesWithin24Hours(a: Date | null, b: Date | null): boolean {
 }
 
 export function extractSemester(courseName: string, courseCode: string): string {
-  const combined = `${courseName} ${courseCode}`.toLowerCase();
-  for (const { markers, code } of SEMESTER_PATTERNS) {
-    if (markers.some(m => combined.includes(m))) return code;
-  }
-  return 'UNKNOWN';
+  return parseSemester(courseName) ?? parseSemester(courseCode) ?? 'UNKNOWN';
 }
 
 export function isNonAcademicCourse(name: string, code: string): boolean {
@@ -125,24 +112,9 @@ export function isNonAcademicCourse(name: string, code: string): boolean {
 }
 
 export function isCurrentCourse(name: string, code: string, currentSemester: string): boolean {
-  const sem = SEMESTER_PATTERNS.find(s => s.code === currentSemester);
-  if (!sem) return false;
-  const combined = `${name} ${code}`.toLowerCase();
-  return sem.markers.some(m => combined.includes(m));
+  return parseSemester(currentSemester) !== null && extractSemester(name, code) === parseSemester(currentSemester);
 }
 
-export function correctEnrollmentState(
-  enrollmentState: string | null,
-  name: string,
-  code: string
-): string {
-  if (isNonAcademicCourse(name, code)) return 'completed';
-  const combinedLower = `${name} ${code}`.toLowerCase();
-  for (const term of PAST_TERMS) {
-    if (combinedLower.includes(term.toLowerCase())) return 'completed';
-  }
-  return enrollmentState || 'active';
-}
 
 export function parseNextCanvasLink(header: string): string | null {
   const parts = header.split(',');

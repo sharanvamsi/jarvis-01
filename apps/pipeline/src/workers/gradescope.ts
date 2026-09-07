@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { db } from '../lib/db';
 import { decrypt } from '../lib/crypto';
-import { isCurrentCourse, assignmentNamesMatch } from '../lib/normalize';
+import { isCurrentCourse, assignmentNamesMatch, normalizeCourseCode } from '../lib/normalize';
+import { observeUserSemester } from '@jarvis/db';
 import { filterByUserSelection } from '../lib/enrollment-filter';
 
 const GRADESCOPE_SERVICE_URL =
@@ -96,12 +97,11 @@ export async function runGradescopeSync(userId: string): Promise<void> {
     }
   } catch (e) {
     console.error('[gradescope] Failed to decrypt credentials:', e);
-    return;
+    throw new Error('Failed to decrypt Gradescope credentials');
   }
 
   if (!email || !password) {
-    console.warn('[gradescope] Missing email or password, skipping');
-    return;
+    throw new Error('Gradescope email or password is missing');
   }
 
   // Check freshness via SyncMetadata
@@ -109,7 +109,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
     where: { userId_source: { userId, source: 'gradescope' } },
   });
 
-  if (lastSync?.lastSynced) {
+  if (lastSync?.lastSynced && lastSync.contentHash === user.currentSemester) {
     const hoursSince =
       (Date.now() - lastSync.lastSynced.getTime()) / 3600000;
     if (hoursSince < THRESHOLD_HOURS) {
@@ -141,7 +141,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
         errorMessage: 'Gradescope sync service is temporarily unavailable. Your data will sync automatically when the service is back online.',
       },
     });
-    return;
+    throw new Error('Gradescope service is unavailable');
   }
 
   const syncLog = await db.syncLog.create({
@@ -158,10 +158,16 @@ export async function runGradescopeSync(userId: string): Promise<void> {
     const coursesData = await callService('/courses', { email, password });
     const courses: GradescopeCourse[] = coursesData.courses ?? [];
     console.log(`[gradescope] Found ${courses.length} courses`);
+    const currentSemester = await observeUserSemester(
+      db,
+      userId,
+      courses.map(buildTermString),
+      'gradescope'
+    );
 
     // Get enrolled DB courses for matching (respect user selection)
     const allEnrollments = await db.enrollment.findMany({
-      where: { userId },
+      where: { userId, course: { term: currentSemester } },
       include: {
         course: {
           select: { id: true, courseCode: true, courseName: true },
@@ -169,8 +175,6 @@ export async function runGradescopeSync(userId: string): Promise<void> {
       },
     });
     const enrollments = filterByUserSelection(allEnrollments);
-
-    const currentSemester = user.currentSemester ?? 'SP26';
 
     // Separate courses into non-current (just raw upserts) and current-semester matched
     type MatchedCourse = {
@@ -189,8 +193,7 @@ export async function runGradescopeSync(userId: string): Promise<void> {
       );
 
       // Write raw Gradescope course
-      await db.rawGradescopeCourse
-        .upsert({
+      await db.rawGradescopeCourse.upsert({
           where: {
             userId_gradescopeId: {
               userId,
@@ -215,9 +218,6 @@ export async function runGradescopeSync(userId: string): Promise<void> {
             rawJson: gsCourse as object,
             syncedAt: now,
           },
-        })
-        .catch((e: any) => {
-          console.error('[gradescope] Course upsert error:', e.message);
         });
 
       if (!isCurrent) continue;
@@ -239,17 +239,36 @@ export async function runGradescopeSync(userId: string): Promise<void> {
         return false;
       });
 
+      let dbCourseId: string;
+      let courseCode: string;
       if (!matchedEnrollment) {
-        console.log(
-          `[gradescope] No DB match for: ${gsCourse.short_name}`,
-        );
-        continue;
+        courseCode = normalizeCourseCode(gsCourse.short_name || gsCourse.full_name);
+        const course = await db.course.upsert({
+          where: { courseCode_term: { courseCode, term: currentSemester } },
+          create: {
+            courseCode,
+            courseName: gsCourse.full_name || gsCourse.short_name,
+            term: currentSemester,
+            gradescopeId: gsCourse.gradescope_id,
+            isCurrentSemester: true,
+          },
+          update: { isCurrentSemester: true, gradescopeId: gsCourse.gradescope_id },
+        });
+        await db.enrollment.upsert({
+          where: { userId_courseId: { userId, courseId: course.id } },
+          create: { userId, courseId: course.id, role: 'student' },
+          update: {},
+        });
+        dbCourseId = course.id;
+      } else {
+        dbCourseId = matchedEnrollment.course.id;
+        courseCode = matchedEnrollment.course.courseCode ?? gsCourse.short_name;
       }
 
       matchedCourses.push({
         gsCourse,
-        dbCourseId: matchedEnrollment.course.id,
-        courseCode: matchedEnrollment.course.courseCode ?? gsCourse.short_name,
+        dbCourseId,
+        courseCode,
       });
     }
 
@@ -531,16 +550,19 @@ export async function runGradescopeSync(userId: string): Promise<void> {
         console.error(`[gradescope] Course sync failed:`, result.reason?.message ?? result.reason);
       }
     }
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) throw new Error(`Gradescope detail fetch failed for ${failures.length} courses`);
 
     // Update sync metadata
     await db.syncMetadata.upsert({
       where: { userId_source: { userId, source: 'gradescope' } },
-      update: { lastSynced: now, needsUnification: true },
+      update: { lastSynced: now, needsUnification: true, contentHash: currentSemester },
       create: {
         userId,
         source: 'gradescope',
         lastSynced: now,
         needsUnification: true,
+        contentHash: currentSemester,
       },
     });
 
@@ -567,5 +589,6 @@ export async function runGradescopeSync(userId: string): Promise<void> {
         errorMessage: error.message,
       },
     });
+    throw error;
   }
 }

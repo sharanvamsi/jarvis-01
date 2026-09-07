@@ -85,7 +85,7 @@ async function main() {
   }
 
   console.log(`[crawler] sending ${extractablePages.length} pages to LLM extraction...`);
-  const extraction = await extractCourseData(extractablePages, rootUrl.toString());
+  const extraction = await extractCourseData(extractablePages, rootUrl.toString(), 'SP26');
   const extractedAt = new Date();
 
   // Log extraction summary

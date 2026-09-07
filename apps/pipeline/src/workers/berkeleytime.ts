@@ -237,15 +237,15 @@ async function fetchInstructorSnapshots(
 }
 
 export async function syncBerkeleytime(userId: string): Promise<void> {
+  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { currentSemester: true } });
   // Get all current-semester courses for this user
   const enrollments = await db.enrollment.findMany({
-    where: { userId },
+    where: { userId, course: { term: user.currentSemester } },
     include: { course: true },
   });
 
   const courses = enrollments
-    .map((e: typeof enrollments[number]) => e.course)
-    .filter((c: typeof enrollments[number]["course"]) => c.isCurrentSemester);
+    .map((e: typeof enrollments[number]) => e.course);
 
   for (const course of courses) {
     const parsed = parseCourseCodeForBT(course.courseCode);

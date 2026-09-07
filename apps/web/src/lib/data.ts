@@ -24,16 +24,16 @@ function getPacificDayRange(date: Date) {
 }
 
 // ── CACHED HELPERS (deduped within a single render) ──────────
-// Shared enrollment filter: respect userSelected if any exist, else fall back to isCurrentSemester
+// Currentness is user-scoped. Course rows are shared across accounts.
 async function getUserCourseWhere(userId: string) {
+  const user = await db.user.findUnique({ where: { id: userId }, select: { currentSemester: true } })
   const selectedCount = await db.enrollment.count({
-    where: { userId, userSelected: true },
+    where: { userId, userSelected: true, course: { term: user?.currentSemester } },
   })
   return {
     userId,
-    ...(selectedCount > 0
-      ? { userSelected: true }
-      : { course: { isCurrentSemester: true } }),
+    course: { term: user?.currentSemester ?? 'UNKNOWN' },
+    ...(selectedCount > 0 ? { userSelected: true } : {}),
   }
 }
 
@@ -55,7 +55,30 @@ export async function requireAuth() {
 
 export const getCurrentSemester = cache(async (userId: string) => {
   const user = await db.user.findUnique({ where: { id: userId }, select: { currentSemester: true } })
-  return user?.currentSemester ?? 'SP26'
+  return user?.currentSemester ?? 'UNKNOWN'
+})
+
+export const getRecentSemesterHandoff = cache(async (userId: string) => {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const user = await db.user.findUnique({ where: { id: userId }, select: { currentSemester: true } })
+    if (!user) return null
+    const selectedCount = await db.enrollment.count({
+      where: { userId, userSelected: true, course: { term: user.currentSemester } },
+    })
+    if (selectedCount > 0) return null
+    return await db.syncLog.findFirst({
+      where: {
+        userId,
+        service: 'semester_handoff',
+        startedAt: { gte: sevenDaysAgo },
+      },
+      orderBy: { startedAt: 'desc' },
+      select: { errorMessage: true, startedAt: true },
+    })
+  } catch {
+    return null
+  }
 })
 
 // ── COURSES ───────────────────────────────────────────────────
@@ -68,7 +91,6 @@ export const getUserCourses = cache(async (userId: string) => {
         course: {
           include: {
             assignments: {
-              where: { isCurrentSemester: true },
               include: {
                 userAssignments: { where: { userId } },
               },
@@ -138,7 +160,6 @@ export const getUpcomingAssignments = cache(async (userId: string, days = 14) =>
     const assignments = await db.assignment.findMany({
       where: {
         courseId: { in: courseIds },
-        isCurrentSemester: true,
         dueDate: { gte: now, lte: future },
       },
       include: {
@@ -194,7 +215,6 @@ export const getMissingAssignments = cache(async (userId: string) => {
     const pastDue = await db.assignment.findMany({
       where: {
         courseId: { in: courseIds },
-        isCurrentSemester: true,
         dueDate: { lt: now, not: null },
       },
       include: {
@@ -353,20 +373,17 @@ export const getDashboardStats = cache(async (userId: string) => {
       db.assignment.count({
         where: {
           courseId: { in: courseIds },
-          isCurrentSemester: true,
           dueDate: { gte: now, lte: weekFromNow },
         },
       }),
       db.assignment.count({
         where: {
           courseId: { in: courseIds },
-          isCurrentSemester: true,
         },
       }),
       db.assignment.count({
         where: {
           courseId: { in: courseIds },
-          isCurrentSemester: true,
           dueDate: { lt: now, not: null },
           NOT: {
             userAssignments: {
@@ -392,7 +409,6 @@ export const getUserGrades = cache(async (userId: string) => {
     const assignments = await db.assignment.findMany({
       where: {
         courseId: { in: courseIds },
-        isCurrentSemester: true,
       },
       include: {
         course: { select: { courseCode: true, courseName: true } },
@@ -543,7 +559,6 @@ export const getGradesPageData = cache(async (userId: string) => {
         course: {
           include: {
             assignments: {
-              where: { isCurrentSemester: true },
               include: {
                 userAssignments: { where: { userId } },
                 overrides: { where: { userId } },

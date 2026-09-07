@@ -10,10 +10,11 @@ export async function GET() {
 
   try {
     const userId = session.user.id;
+    const user = await db.user.findUnique({ where: { id: userId }, select: { currentSemester: true } });
 
     // Respect userSelected: if user has selections, show only those
     const selectedCount = await db.enrollment.count({
-      where: { userId, userSelected: true },
+      where: { userId, userSelected: true, course: { term: user?.currentSemester } },
     });
 
     const enrollments = await db.enrollment.findMany({
@@ -21,7 +22,8 @@ export async function GET() {
         userId,
         ...(selectedCount > 0
           ? { userSelected: true }
-          : { course: { isCurrentSemester: true } }),
+          : {}),
+        course: { term: user?.currentSemester ?? 'UNKNOWN' },
       },
       include: {
         course: {

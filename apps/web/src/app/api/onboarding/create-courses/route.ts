@@ -21,6 +21,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const user = await db.user.findUnique({
+      where: { id: session.user.id },
+      select: { currentSemester: true },
+    })
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    if (courses.some(course => course.term !== user.currentSemester)) {
+      return NextResponse.json({ error: 'Course semester is no longer current; refresh your course list' }, { status: 409 })
+    }
     const createdCourses: { id: string; courseCode: string; courseName: string }[] = []
 
     await db.$transaction(async (tx) => {

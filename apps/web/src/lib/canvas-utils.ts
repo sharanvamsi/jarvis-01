@@ -1,6 +1,7 @@
 // Canvas course utilities — copied from jarvis-pipeline/src/lib/normalize.ts
 // The two repos share no dependencies, so these pure functions are duplicated here.
 
+import { parseSemester, latestSemester } from '@jarvis/db'
 const CANVAS_API_BASE = 'https://bcourses.berkeley.edu/api/v1'
 
 const DEPT_ALIASES: Record<string, string> = {
@@ -24,19 +25,10 @@ const SKIP_SUBSTRINGS = [
   'GOLDEN BEAR ORIENTATION', 'GOLDEN BEAR ADVISING',
 ]
 
-const SEMESTER_PATTERNS: Array<{ markers: string[]; code: string }> = [
-  { markers: ['spring 2026', 'sp26'], code: 'SP26' },
-  { markers: ['fall 2025', 'fa25'], code: 'FA25' },
-  { markers: ['spring 2025', 'sp25'], code: 'SP25' },
-  { markers: ['fall 2024', 'fa24'], code: 'FA24' },
-  { markers: ['spring 2024', 'sp24'], code: 'SP24' },
-  { markers: ['fall 2023', 'fa23'], code: 'FA23' },
-]
-
 export function normalizeCourseCode(code: string): string {
   let normalized = code.trim().toUpperCase()
   normalized = normalized.replace(/-+$/, '')
-  normalized = normalized.replace(/\s*(?:SP|FA|SU)\d{2}$/i, '')
+  normalized = normalized.replace(/\s*(?:WI|SP|FA|SU)\d{2}$/i, '')
   normalized = normalized.replace(/-(?:LEC|DIS|LAB|SEM|IND|FLD|REC|TUT)-\d+/g, '')
   normalized = normalized.replace(/\s*&\s*\d+/g, '')
   normalized = normalized.replace(/\/\w+$/, '')
@@ -54,11 +46,7 @@ export function normalizeCourseCode(code: string): string {
 }
 
 export function extractSemester(courseName: string, courseCode: string): string {
-  const combined = `${courseName} ${courseCode}`.toLowerCase()
-  for (const { markers, code } of SEMESTER_PATTERNS) {
-    if (markers.some(m => combined.includes(m))) return code
-  }
-  return 'UNKNOWN'
+  return parseSemester(courseName) ?? parseSemester(courseCode) ?? 'UNKNOWN'
 }
 
 export function isNonAcademicCourse(name: string, code: string): boolean {
@@ -72,10 +60,7 @@ export function isNonAcademicCourse(name: string, code: string): boolean {
 }
 
 export function isCurrentCourse(name: string, code: string, currentSemester: string): boolean {
-  const sem = SEMESTER_PATTERNS.find(s => s.code === currentSemester)
-  if (!sem) return false
-  const combined = `${name} ${code}`.toLowerCase()
-  return sem.markers.some(m => combined.includes(m))
+  return parseSemester(currentSemester) !== null && extractSemester(name, code) === parseSemester(currentSemester)
 }
 
 export interface OnboardingCourse {
@@ -85,6 +70,11 @@ export interface OnboardingCourse {
   term: string
 }
 
+export interface CanvasCourseDiscovery {
+  courses: OnboardingCourse[]
+  observedSemester: string
+}
+
 /**
  * Fetch current-semester courses from Canvas API using the provided token.
  * Does NOT save the token — caller is responsible for that.
@@ -92,7 +82,7 @@ export interface OnboardingCourse {
 export async function fetchCanvasCourses(
   token: string,
   currentSemester: string
-): Promise<OnboardingCourse[]> {
+): Promise<CanvasCourseDiscovery> {
   const res = await fetch(
     `${CANVAS_API_BASE}/courses?enrollment_state=active&per_page=50&include[]=term`,
     {
@@ -112,6 +102,11 @@ export async function fetchCanvasCourses(
     enrollments?: Array<{ enrollment_state: string }>
   }>
 
+  const recognized = courses
+    .filter(course => course.name && !isNonAcademicCourse(course.name, course.course_code || ''))
+    .map(course => extractSemester(course.name, course.course_code || ''))
+    .filter(term => term !== 'UNKNOWN')
+  const observedSemester = latestSemester(recognized, currentSemester) ?? currentSemester
   const result: OnboardingCourse[] = []
   const seenCodes = new Set<string>()
 
@@ -120,7 +115,7 @@ export async function fetchCanvasCourses(
     const code = course.course_code || ''
 
     if (isNonAcademicCourse(course.name, code)) continue
-    if (!isCurrentCourse(course.name, code, currentSemester)) continue
+    if (!isCurrentCourse(course.name, code, observedSemester)) continue
 
     const normalizedCode = normalizeCourseCode(code || course.name)
     const term = extractSemester(course.name, code)
@@ -138,5 +133,5 @@ export async function fetchCanvasCourses(
     })
   }
 
-  return result
+  return { courses: result, observedSemester }
 }

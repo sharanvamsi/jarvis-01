@@ -1,7 +1,8 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { LogOut } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { ArrowDown, LogOut } from "lucide-react";
 import CanvasCard from "@/components/settings/CanvasCard";
 import EdCard from "@/components/settings/EdCard";
 import GradescopeCard from "@/components/settings/GradescopeCard";
@@ -13,6 +14,8 @@ import DeleteAccountSection from "@/components/settings/DeleteAccountSection";
 
 export default function Settings() {
   const { data: session } = useSession();
+  const searchParams = useSearchParams();
+  const isSemesterHandoff = searchParams.get("semesterHandoff") === "1";
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] pb-20 md:pb-0">
@@ -20,6 +23,18 @@ export default function Settings() {
         <h1 className="text-[28px] font-medium text-[#F5F5F5] mb-8">
           Settings
         </h1>
+
+        {isSemesterHandoff && (
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-md p-4 mb-6">
+            <p className="text-sm font-medium text-[#F5F5F5]">A new semester was detected</p>
+            <p className="text-xs text-[#A3A3A3] mt-1">
+              Review the newly discovered courses below. Your previous semester stays in history and will no longer feed the dashboard.
+            </p>
+            <div className="flex items-center gap-1.5 text-xs text-blue-400 mt-3">
+              <ArrowDown className="w-3.5 h-3.5" /> Select your current courses
+            </div>
+          </div>
+        )}
 
         {/* Account */}
         {session?.user && (

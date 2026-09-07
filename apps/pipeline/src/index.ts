@@ -5,14 +5,31 @@ import cron from 'node-cron';
 import { createSyncWorker, syncQueue, connection } from './lib/queue';
 import { syncUser } from './jobs/syncUser';
 import { db } from './lib/db';
+import { randomUUID } from 'node:crypto';
 
 // ── BullMQ Worker ────────────────────────────────────────────
 console.log('[worker] Starting Jarvis sync worker...');
 
 const worker = createSyncWorker(async (job) => {
   const { userId, services } = job.data;
+  const lockKey = `jarvis:sync:user:${userId}`;
+  const lockToken = randomUUID();
+  const acquired = await connection.set(lockKey, lockToken, 'PX', 30 * 60_000, 'NX');
+  if (!acquired) {
+    console.log(`[worker] Skipping duplicate active sync for user ${userId}`);
+    return;
+  }
   console.log(`[worker] Processing sync job for user ${userId}${services ? ` (services: ${services.join(', ')})` : ' (full sync)'}`);
-  await syncUser(userId, services);
+  try {
+    await syncUser(userId, services);
+  } finally {
+    await connection.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+      1,
+      lockKey,
+      lockToken,
+    );
+  }
 });
 
 worker.on('completed', (job) => {

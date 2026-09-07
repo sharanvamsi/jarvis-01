@@ -89,12 +89,14 @@ async function getValidAccessToken(userId: string): Promise<string | null> {
       return accessToken;
     } catch (e) {
       console.error('[calendar] Token refresh failed:', e);
-      // If token is already expired, we can't proceed
-      if (expiresAt < now) return null;
+      // An account exists, so this is an integration failure rather than an
+      // optional unconfigured service.
+      if (expiresAt < now) throw e;
     }
   }
 
-  return account.access_token ?? null;
+  if (!account.access_token) throw new Error('Google Calendar access token is missing');
+  return account.access_token;
 }
 
 async function fetchCalendarEvents(
@@ -176,12 +178,17 @@ export async function runCalendarSync(userId: string): Promise<void> {
     return;
   }
 
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { currentSemester: true },
+  });
+
   // Freshness check via SyncMetadata
   const meta = await db.syncMetadata.findUnique({
     where: { userId_source: { userId, source: 'calendar' } },
   });
 
-  if (meta?.lastSynced) {
+  if (meta?.lastSynced && meta.contentHash === user.currentSemester) {
     const minutesSince =
       (Date.now() - meta.lastSynced.getTime()) / 60000;
     if (minutesSince < THRESHOLD_MINUTES) {
@@ -211,7 +218,7 @@ export async function runCalendarSync(userId: string): Promise<void> {
 
     // Get enrolled courses for class detection
     const enrollments = await db.enrollment.findMany({
-      where: { userId },
+      where: { userId, course: { term: user.currentSemester } },
       include: { course: { select: { courseCode: true } } },
     });
     const courses = enrollments.map((e) => e.course);
@@ -266,8 +273,8 @@ export async function runCalendarSync(userId: string): Promise<void> {
 
     await db.syncMetadata.upsert({
       where: { userId_source: { userId, source: 'calendar' } },
-      update: { lastSynced: new Date() },
-      create: { userId, source: 'calendar', lastSynced: new Date() },
+      update: { lastSynced: new Date(), contentHash: user.currentSemester },
+      create: { userId, source: 'calendar', lastSynced: new Date(), contentHash: user.currentSemester },
     });
 
     await db.syncLog.update({
@@ -295,5 +302,6 @@ export async function runCalendarSync(userId: string): Promise<void> {
         errorMessage: message,
       },
     });
+    throw error;
   }
 }

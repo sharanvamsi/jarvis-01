@@ -25,6 +25,7 @@ import {
   hasGradescopeToken,
   getGradescopeSyncError,
   getCurrentSemester,
+  getRecentSemesterHandoff,
 } from '@/lib/data';
 
 export default async function Dashboard() {
@@ -46,6 +47,7 @@ export default async function Dashboard() {
     edConnected,
     gradescopeConnected,
     gradescopeSyncError,
+    semesterHandoff,
   ] = await Promise.all([
     getUpcomingAssignments(user.id),
     getMissingAssignments(user.id),
@@ -61,6 +63,7 @@ export default async function Dashboard() {
     hasEdToken(user.id),
     hasGradescopeToken(user.id),
     getGradescopeSyncError(user.id),
+    getRecentSemesterHandoff(user.id),
   ]);
 
   // Use Pacific time (Berkeley) so the date/greeting are correct on Vercel (UTC)
@@ -137,6 +140,20 @@ export default async function Dashboard() {
           </div>
           <div className="text-[#A3A3A3] text-sm">{dateStr}</div>
         </div>
+
+        {semesterHandoff && (
+          <div className="mb-6 flex items-start gap-3 bg-blue-500/10 border border-blue-500/30 rounded-md p-4">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-[#F5F5F5]">New semester detected</p>
+              <p className="text-xs text-[#A3A3A3] mt-0.5">
+                Jarvis moved your live dashboard to the latest term. Review your new courses to finish the handoff.
+              </p>
+              <Link href="/settings?semesterHandoff=1" className="inline-flex mt-2 text-xs text-blue-400 hover:text-blue-300">
+                Review courses &rarr;
+              </Link>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
           <StatCard

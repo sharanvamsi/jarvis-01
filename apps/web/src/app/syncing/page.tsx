@@ -24,9 +24,11 @@ export default function SyncingPage() {
   const router = useRouter();
   const [elapsed, setElapsed] = useState(0);
   const [services, setServices] = useState<Record<string, ServiceStatus>>({});
+  const [semesterHandoff, setSemesterHandoff] = useState(false);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const doneRef = useRef(false);
+  const handoffRef = useRef(false);
 
   const getIcon = useCallback((svc: ServiceStatus | undefined) => {
     if (!svc) return <div className="w-3.5 h-3.5 rounded-full border border-[#525252]" />;
@@ -57,10 +59,14 @@ export default function SyncingPage() {
         const res = await fetch('/api/sync/status');
         const data = await res.json();
         if (data.services) setServices(data.services);
+        if (data.semesterHandoff) {
+          handoffRef.current = true;
+          setSemesterHandoff(true);
+        }
         if (!data.isRunning && !doneRef.current) {
           doneRef.current = true;
           // Brief pause so user sees final state
-          setTimeout(() => router.replace('/'), 1000);
+          setTimeout(() => router.replace(data.semesterHandoff ? '/settings?semesterHandoff=1' : '/'), 1000);
         }
       } catch {
         // ignore poll errors
@@ -70,7 +76,7 @@ export default function SyncingPage() {
     const timeout = setTimeout(() => {
       clearInterval(pollRef.current!);
       clearInterval(timerRef.current!);
-      router.replace('/');
+      router.replace(handoffRef.current ? '/settings?semesterHandoff=1' : '/');
     }, 90_000);
 
     return () => {
@@ -95,7 +101,11 @@ export default function SyncingPage() {
           </div>
         )}
         <p className="text-sm text-[#F5F5F5] font-medium">
-          {allDone ? 'Sync complete — redirecting...' : 'Syncing your data'}
+          {allDone
+            ? semesterHandoff
+              ? 'New semester found — review your courses'
+              : 'Sync complete — redirecting...'
+            : 'Syncing your data'}
         </p>
       </div>
 
