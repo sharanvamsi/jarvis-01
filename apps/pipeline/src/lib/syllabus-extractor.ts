@@ -1,8 +1,6 @@
 import { config } from 'dotenv';
 config({ override: true });
-import Anthropic from '@anthropic-ai/sdk';
-
-const client = new Anthropic();
+import { EXTRACTION_MODEL, getOpenAIClient } from './openai';
 
 export interface ExtractedClobberPolicy {
   sourceName: string;
@@ -113,22 +111,15 @@ export async function extractSyllabus(
   // but some syllabi have multiple relevant sections that total >15k
   const truncated = rawText.slice(0, 25000);
 
-  const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 2000,
-    messages: [
-      {
-        role: 'user',
-        content: `Parse the grading structure from this ${courseCode} syllabus:\n\n${truncated}`,
-      },
-    ],
-    system: SYSTEM_PROMPT,
+  const response = await getOpenAIClient().responses.create({
+    model: EXTRACTION_MODEL,
+    max_output_tokens: 2000,
+    instructions: SYSTEM_PROMPT,
+    input: `Parse the grading structure from this ${courseCode} syllabus:\n\n${truncated}`,
+    text: { format: { type: 'json_object' } },
   });
 
-  let text = response.content
-    .filter((b) => b.type === 'text')
-    .map((b) => (b as { type: 'text'; text: string }).text)
-    .join('');
+  let text = response.output_text;
 
   // Strip markdown code fences if present (```json ... ```)
   const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);

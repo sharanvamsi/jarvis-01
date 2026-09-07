@@ -1,6 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
-
-const client = new Anthropic();
+import { EXTRACTION_MODEL, getOpenAIClient } from './openai';
 
 export interface GroupDefinition {
   id: string;
@@ -159,12 +157,12 @@ export async function llmBatchMatch(
     .map((a, i) => `${i + 1}.[${a.assignmentType ?? '?'}]"${a.name}"`)
     .join('\n');
 
-  let response;
+  let text: string;
   try {
-    response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 800,
-      system: `Match ${courseCode} assignments to grade component groups. Return only JSON array, no markdown.
+    const response = await getOpenAIClient().responses.create({
+      model: EXTRACTION_MODEL,
+      max_output_tokens: 800,
+      instructions: `Match ${courseCode} assignments to grade component groups. Return only JSON array, no markdown.
 Groups: ${groupList}
 Rules:
 - "Chapter X-POOL" or "On your own" = homework pool
@@ -172,15 +170,12 @@ Rules:
 - "Academic Integrity" = null (not a real graded assignment)
 - Match by educational purpose, not just name similarity
 - Return null group for junk/admin assignments`,
-      messages: [
-        {
-          role: 'user',
-          content: `${assignmentList}\n\nReturn:[{"i":1,"g":"exact group name or null","c":"high|medium|low"}]`,
-        },
-      ],
+      input: `${assignmentList}\n\nReturn:{"matches":[{"i":1,"g":"exact group name or null","c":"high|medium|low"}]}`,
+      text: { format: { type: 'json_object' } },
     });
+    text = response.output_text;
   } catch (error) {
-    console.error('[matcher] Anthropic API error:', error);
+    console.error('[matcher] OpenAI API error:', error);
     return unmatched.map((a) => ({
       assignmentId: a.id,
       componentGroupId: null,
@@ -189,17 +184,14 @@ Rules:
     }));
   }
 
-  const text = response.content
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
+  text = text
     .replace(/```json?\n?|\n?```/g, '')
     .trim();
 
   let results: { i: number; g: string | null; c: string }[];
   try {
-    const arrayMatch = text.match(/\[[\s\S]*\]/);
-    results = JSON.parse(arrayMatch?.[0] ?? text);
+    const parsed = JSON.parse(text) as { matches?: { i: number; g: string | null; c: string }[] };
+    results = parsed.matches ?? [];
   } catch {
     console.error('[matcher] JSON parse error:', text.slice(0, 300));
     return unmatched.map((a) => ({
