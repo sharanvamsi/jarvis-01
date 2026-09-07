@@ -63,8 +63,15 @@ export async function syncUser(userId: string, services?: string[]): Promise<voi
     }
   }
 
-  // Post-sync: syllabus + BerkeleyTime (only on full sync or explicit request)
-  if (shouldRun('syllabus')) {
+  // Grade context depends on the current course list. Any source that can add
+  // or update a course must refresh syllabus weights and Berkeleytime data;
+  // otherwise the common course-selection sync leaves Grades permanently empty.
+  const shouldRefreshGradeContext =
+    shouldRun('syllabus') ||
+    shouldRun('canvas') ||
+    shouldRun('gradescope') ||
+    shouldRun('course_website');
+  if (shouldRefreshGradeContext) {
     const postResults = await Promise.allSettled([
       syncBerkeleytime(userId),
       syncSyllabus(userId),

@@ -544,7 +544,11 @@ const BT_SUBJECT_MAP: Record<string, string> = {
 export function parseCourseCodeForBT(
   courseCode: string
 ): { subject: string; courseNumber: string } | null {
-  const match = courseCode.trim().match(/^([A-Z]+)\s+(\w+)$/)
+  const normalized = courseCode
+    .trim()
+    .toUpperCase()
+    .replace(/[-\s](?:WI|SP|SU|FA|F)\d{2}$/, '')
+  const match = normalized.match(/^([A-Z]+)\s+(\d+[A-Z]?)$/)
   if (!match) return null
   const [, dept, num] = match
   return { subject: BT_SUBJECT_MAP[dept] ?? dept, courseNumber: num }
