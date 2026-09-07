@@ -165,7 +165,10 @@ async function fetchGrade(
     { subject, courseId, ...filters },
   );
   const grade = data?.grade;
-  return grade?.distribution?.length ? grade : null;
+  // Berkeleytime returns a fixed, all-zero letter-grade template when a term
+  // has no published distribution. Treat that as absent data so it cannot
+  // poison the historical-backfill cache.
+  return grade?.distribution?.some((item) => item.count > 0) ? grade : null;
 }
 
 export async function fetchAllTime(

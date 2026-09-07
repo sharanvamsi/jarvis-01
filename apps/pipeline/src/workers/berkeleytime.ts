@@ -16,6 +16,14 @@ const INTER_CALL_DELAY_MS = 150;
 const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+function hasUsableDistribution(distribution: unknown): boolean {
+  return Array.isArray(distribution) && distribution.some(
+    (item) => typeof item === 'object' && item !== null &&
+      typeof (item as { count?: unknown }).count === 'number' &&
+      (item as { count: number }).count > 0,
+  );
+}
+
 async function upsertSnapshot(
   btCourseId: string,
   year: number,
@@ -92,7 +100,9 @@ async function backfillCourse(
 
   await db.berkeleyTimeCourse.update({
     where: { id: btCourseId },
-    data: { historicalBackfillDone: true },
+    // Do not cache an API outage or empty course as a completed backfill.
+    // Otherwise that course is skipped forever on subsequent syncs.
+    data: { historicalBackfillDone: fetched > 0 },
   });
 
   console.log(`[BT] Backfill complete for ${subject} ${courseNumber} — ${fetched} semesters stored`);
@@ -270,8 +280,19 @@ export async function syncBerkeleytime(userId: string): Promise<void> {
       update: {},
     });
 
+    // A previous Berkeleytime API change caused empty backfills to be marked
+    // complete. Re-run those records automatically once usable data is
+    // available rather than requiring a manual database repair.
+    const snapshots = await db.berkeleyTimeSnapshot.findMany({
+      where: { btCourseId: btCourse.id },
+      select: { distribution: true },
+    });
+    const hasHistoricalData = snapshots.some((snapshot) =>
+      hasUsableDistribution(snapshot.distribution),
+    );
+
     // Decide: full backfill or incremental
-    if (!btCourse.historicalBackfillDone) {
+    if (!btCourse.historicalBackfillDone || !hasHistoricalData) {
       await backfillCourse(btCourse.id, parsed.subject, parsed.courseNumber, userId);
     } else {
       // Incremental: only re-sync if >23 hours since last sync
