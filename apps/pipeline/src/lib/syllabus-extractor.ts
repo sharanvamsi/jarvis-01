@@ -115,7 +115,7 @@ export async function extractSyllabus(
     model: EXTRACTION_MODEL,
     max_output_tokens: 2000,
     instructions: SYSTEM_PROMPT,
-    input: `Parse the grading structure from this ${courseCode} syllabus:\n\n${truncated}`,
+    input: `Parse the grading structure from this ${courseCode} syllabus. Return a JSON object only.\n\n${truncated}`,
     text: { format: { type: 'json_object' } },
   });
 

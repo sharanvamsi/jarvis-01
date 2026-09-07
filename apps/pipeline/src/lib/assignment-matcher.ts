@@ -170,7 +170,7 @@ Rules:
 - "Academic Integrity" = null (not a real graded assignment)
 - Match by educational purpose, not just name similarity
 - Return null group for junk/admin assignments`,
-      input: `${assignmentList}\n\nReturn:{"matches":[{"i":1,"g":"exact group name or null","c":"high|medium|low"}]}`,
+      input: `${assignmentList}\n\nReturn a JSON object: {"matches":[{"i":1,"g":"exact group name or null","c":"high|medium|low"}]}`,
       text: { format: { type: 'json_object' } },
     });
     text = response.output_text;
